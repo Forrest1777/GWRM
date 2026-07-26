@@ -1,0 +1,7 @@
+node_modules/
+logs/*
+!logs/.gitkeep
+state/*
+!state/.gitkeep
+gwrm.config.json
+*.local.json

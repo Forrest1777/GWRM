@@ -1,0 +1,19 @@
+# O orquestrador pode acessar o GWRM para status e validacao, mas nao controla
+# obrigatoriamente a flag das worktrees. O worker e o responsavel pelo lifecycle.
+
+mcp_servers:
+  gwrm:
+    type: streamable_http
+    url: http://host.docker.internal:8123/mcp
+    headers:
+      X-API-Key: <GWRM_API_KEY>
+    connect_timeout: 60
+    timeout: 900
+    tools:
+      include:
+        - gwrm_status
+        - get_worktree_status
+        - run_gut_tests
+        - run_gut_test_script
+      resources: false
+      prompts: false

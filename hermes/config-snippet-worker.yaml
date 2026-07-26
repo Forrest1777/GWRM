@@ -1,0 +1,59 @@
+# Mescle estas secoes no config.yaml do implementation-worker.
+# Substitua <GWRM_API_KEY> pelo mesmo valor de service.api_key do gwrm.config.json.
+
+lsp:
+  enabled: true
+  servers:
+    godot-gdscript:
+      env:
+        GWRM_CONTROL_URL: http://host.docker.internal:8130
+        GWRM_API_KEY: <GWRM_API_KEY>
+        GWRM_CONTAINER_WORKTREES_ROOT: /workspace/kanban-worktrees
+        GWRM_ENSURE_TIMEOUT: '190'
+        GODOT_LSP_CONTAINER_ROOT: /workspace
+        GODOT_LSP_HOST_ROOT: E:/dev/ai_agents/hermes/workspace
+        GODOT_LSP_CONNECT_TIMEOUT: '10'
+
+plugins:
+  enabled:
+    - godot-lsp
+  entries:
+    godot-lsp:
+      allow_tool_override: true
+
+platform_toolsets:
+  cli:
+    - godot_lsp
+
+mcp_servers:
+  gwrm:
+    type: streamable_http
+    url: http://host.docker.internal:8123/mcp
+    headers:
+      X-API-Key: <GWRM_API_KEY>
+    connect_timeout: 60
+    timeout: 900
+    tools:
+      include:
+        - gwrm_status
+        - activate_worktree
+        - deactivate_worktree
+        - get_worktree_status
+        - run_gut_tests
+        - run_gut_test_script
+        - launch_editor
+        - run_project
+        - get_debug_output
+        - stop_project
+        - get_godot_version
+        - list_projects
+        - get_project_info
+        - create_scene
+        - add_node
+        - load_sprite
+        - export_mesh_library
+        - save_scene
+        - get_uid
+        - update_project_uids
+      resources: false
+      prompts: false
