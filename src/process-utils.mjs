@@ -1,25 +1,73 @@
 import { spawn } from "node:child_process";
 
+function sleep(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+export async function waitForPidExit(pid, timeoutMs = 10000) {
+  if (!Number.isInteger(pid) || pid <= 0) return true;
+
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!isPidAlive(pid)) return true;
+    await sleep(100);
+  }
+
+  return !isPidAlive(pid);
+}
+
 export async function terminateProcessTree(pid, config, logger, expectedFragment = "") {
-  if (!Number.isInteger(pid) || pid <= 0) return;
+  if (!Number.isInteger(pid) || pid <= 0) return true;
+  if (!isPidAlive(pid)) return true;
 
   if (process.platform === "win32") {
     if (expectedFragment) {
       const commandLine = await getWindowsCommandLine(pid, config).catch(() => "");
       if (commandLine && !commandLine.toLowerCase().includes(expectedFragment.toLowerCase())) {
-        await logger.warn("PID nao corresponde ao processo esperado; encerramento ignorado.", { pid });
-        return;
+        const message = "PID nao corresponde ao processo esperado; encerramento recusado.";
+        await logger.warn(message, { pid, expected_fragment: expectedFragment });
+        throw new Error(`${message} PID=${pid}.`);
       }
     }
-    await runAndWait("taskkill.exe", ["/PID", String(pid), "/T", "/F"], config.service.shutdownTimeoutSeconds * 1000).catch(async (error) => {
-      await logger.warn("Falha ao encerrar arvore de processos.", { pid, error: error.message });
-    });
-    return;
+
+    const result = await runAndCapture(
+      "taskkill.exe",
+      ["/PID", String(pid), "/T", "/F"],
+      config.service.shutdownTimeoutSeconds * 1000,
+    ).catch((error) => ({ code: null, signal: null, stdout: "", stderr: error.message }));
+
+    const exited = await waitForPidExit(
+      pid,
+      config.service.shutdownTimeoutSeconds * 1000,
+    );
+
+    if (!exited) {
+      const detail = result.stderr?.trim() || result.stdout?.trim() || `codigo=${result.code}`;
+      await logger.error("Processo permaneceu ativo apos taskkill.", { pid, detail });
+      throw new Error(`Nao foi possivel encerrar a arvore do processo ${pid}: ${detail}`);
+    }
+
+    if (result.code !== 0 && result.code !== null) {
+      await logger.warn("taskkill retornou codigo nao zero, mas o processo foi encerrado.", {
+        pid,
+        code: result.code,
+        stderr: result.stderr?.trim(),
+      });
+    }
+
+    return true;
   }
 
   try { process.kill(pid, "SIGTERM"); } catch {}
-  await new Promise((resolve) => setTimeout(resolve, 500));
+  if (await waitForPidExit(pid, 500)) return true;
   try { process.kill(pid, "SIGKILL"); } catch {}
+
+  const exited = await waitForPidExit(
+    pid,
+    config.service.shutdownTimeoutSeconds * 1000,
+  );
+  if (!exited) throw new Error(`Nao foi possivel encerrar o processo ${pid}.`);
+  return true;
 }
 
 export function isPidAlive(pid) {

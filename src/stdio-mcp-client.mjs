@@ -16,6 +16,7 @@ export class StdioMcpClient {
     this.pending = new Map();
     this.tools = [];
     this.closed = false;
+    this.readline = null;
   }
 
   async start() {
@@ -34,11 +35,12 @@ export class StdioMcpClient {
     this.child.once("error", (error) => this.#failAll(error));
     this.child.once("close", (code, signal) => {
       this.closed = true;
+      this.readline?.close();
       this.#failAll(new Error(`Godot MCP ${this.label} encerrou (codigo=${code}, sinal=${signal}).`));
     });
 
-    const rl = readline.createInterface({ input: this.child.stdout, crlfDelay: Infinity });
-    rl.on("line", (line) => this.#onLine(line));
+    this.readline = readline.createInterface({ input: this.child.stdout, crlfDelay: Infinity });
+    this.readline.on("line", (line) => this.#onLine(line));
 
     await this.request("initialize", {
       protocolVersion: this.protocolVersion,
@@ -106,11 +108,24 @@ export class StdioMcpClient {
   }
 
   async close() {
-    if (this.closed) return;
+    if (this.closed) {
+      this.readline?.close();
+      return;
+    }
+
     this.closed = true;
+    this.readline?.close();
+    this.#failAll(new Error(`Godot MCP ${this.label} foi encerrado.`));
     try { this.child.stdin.end(); } catch {}
-    try { this.child.kill("SIGTERM"); } catch {}
-    await new Promise((resolve) => setTimeout(resolve, 300));
+    try { this.child.stdout?.destroy(); } catch {}
+    try { this.child.stderr?.destroy(); } catch {}
+
+    // O SessionManager encerra a arvore com taskkill /T antes deste cleanup.
+    // Este kill e apenas um fallback para usos isolados do cliente.
+    if (this.child.exitCode === null) {
+      try { this.child.kill("SIGTERM"); } catch {}
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    }
     if (this.child.exitCode === null) {
       try { this.child.kill("SIGKILL"); } catch {}
     }

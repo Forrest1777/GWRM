@@ -44,6 +44,9 @@ test("activate, route MCP, run GUT and deactivate isolated worktree", { timeout:
     const gut = new GutRunner(config, sessions, logger);
     const result = await gut.runDirectory("t_test", "res://tests/skill_system/ai_system");
     assert.equal(result.passed, true);
+    assert.equal(result.result_source, "junit_xml");
+    assert.equal(result.junit_xml_generated, true);
+    assert.equal(result.counts.tests, 3);
 
     const stopped = await sessions.deactivateWorktree("t_test", "test");
     assert.equal(stopped.desired_active, false);

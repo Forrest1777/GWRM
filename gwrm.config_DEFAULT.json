@@ -1,0 +1,67 @@
+﻿{
+    "schema_version":  1,
+    "service":  {
+                    "name":  "GWRM",
+                    "mcp_port":  8123,
+                    "control_port":  8130,
+                    "bind_host":  "0.0.0.0",
+                    "api_key":  "00fb45599c6ac65b6e70a3d7b67e37052ada4f341d333417f428e85aad6bdaa5",
+                    "reconciliation_interval_seconds":  30,
+                    "max_active_worktrees":  4,
+                    "shutdown_timeout_seconds":  10
+                },
+    "paths":  {
+                  "node_executable":  "node",
+                  "npm_executable":  "npm.cmd",
+                  "powershell_executable":  "powershell.exe",
+                  "godot_executable":  "E:\\dev\\IDE\\win64-g43-s161-gs412-mp-d3d12\\Godot_v4.6-stable_win64_console.exe",
+                  "windows_workspace_root":  "E:\\dev\\ai_agents\\hermes\\workspace",
+                  "container_workspace_root":  "/workspace",
+                  "windows_worktrees_root":  "E:\\dev\\ai_agents\\hermes\\workspace\\kanban-worktrees",
+                  "container_worktrees_root":  "/workspace/kanban-worktrees",
+                  "state_directory":  "./state",
+                  "logs_directory":  "./logs"
+              },
+    "ports":  {
+                  "lsp_start":  6100,
+                  "lsp_end":  6199,
+                  "lsp_proxy_start":  7100,
+                  "lsp_proxy_end":  7199,
+                  "dap_start":  6200,
+                  "dap_end":  6299
+              },
+    "sessions":  {
+                     "ready_timeout_seconds":  180,
+                     "inactive_shutdown_delay_seconds":  0,
+                     "restart_active_sessions_after_crash":  true,
+                     "remove_configuration_when_worktree_missing":  true,
+                     "require_class_cache_before_ready":  true
+                 },
+    "godot":  {
+                  "executable_args_prefix":  [
+
+                                             ],
+                  "local_ready_host":  "127.0.0.1",
+                  "lsp_relay_enabled":  true,
+                  "lsp_host_for_hermes":  "host.docker.internal",
+                  "additional_editor_args":  [
+
+                                             ]
+              },
+    "godot_mcp":  {
+                      "command":  "@node",
+                      "args":  [
+                                   "./node_modules/@coding-solo/godot-mcp/build/index.js"
+                               ],
+                      "protocol_version":  "2024-11-05",
+                      "startup_timeout_seconds":  60,
+                      "request_timeout_seconds":  300
+                  },
+    "gut":  {
+                "default_test_directory":  "res://tests/skill_system/ai_system",
+                "allowed_test_root":  "res://tests/skill_system/ai_system",
+                "timeout_seconds":  600,
+                "max_output_characters":  30000,
+                "max_concurrent_processes":  2
+            }
+}

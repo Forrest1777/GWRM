@@ -212,7 +212,9 @@ export class SessionManager {
       ...this.config.godot.additionalEditorArgs,
     ];
     const godot = spawn(this.config.paths.godotExecutable, args, {
-      cwd: record.host_project_path,
+      // Nunca use a worktree como cwd: no Windows isso mantem o diretorio bloqueado.
+      // O argumento --path ja seleciona explicitamente o projeto Godot.
+      cwd: this.config.appRoot,
       env: process.env,
       windowsHide: true,
       shell: false,
@@ -288,23 +290,85 @@ export class SessionManager {
       await this.#persist(record);
       return;
     }
+
     record.status = "stopping";
+    record.last_error = null;
     await this.#persist(record);
-    if (runtime?.relay) await runtime.relay.close().catch(() => {});
-    if (runtime?.mcp) await runtime.mcp.close().catch(() => {});
+
+    // Capture os PIDs antes de fechar o cliente MCP. Se o processo pai encerrar
+    // primeiro, taskkill /T nao consegue mais localizar e eliminar descendentes
+    // como um jogo/editor iniciado pelo Godot MCP.
     const mcpPid = runtime?.mcp?.pid || record.godot_mcp_pid;
-    if (mcpPid && isPidAlive(mcpPid)) await terminateProcessTree(mcpPid, this.config, this.logger, "godot-mcp");
     const godotPid = runtime?.godot?.pid || record.godot_pid;
-    if (godotPid && isPidAlive(godotPid)) await terminateProcessTree(godotPid, this.config, this.logger, record.host_project_path);
-    runtime?.stdout?.end();
-    runtime?.stderr?.end();
-    this.runtime.delete(record.worktree_name);
-    record.godot_pid = null;
-    record.godot_mcp_pid = null;
-    record.status = "stopped";
-    record.updated_at = now();
-    await this.#persist(record);
-    await this.logger.info("Servicos da worktree encerrados.", { worktree: record.worktree_name, reason });
+
+    try {
+      if (runtime?.relay) {
+        await runtime.relay.close().catch(async (error) => {
+          await this.logger.warn("Falha ao encerrar relay LSP durante cleanup.", {
+            worktree: record.worktree_name,
+            error: error.message,
+          });
+        });
+      }
+
+      // Solicite primeiro o encerramento normal do projeto controlado pelo MCP.
+      // O taskkill /T abaixo permanece como garantia contra timeout ou processo orfao.
+      if (runtime?.mcp?.isAlive && runtime.mcp.hasTool("stop_project")) {
+        await Promise.race([
+          runtime.mcp.callTool("stop_project", {}),
+          new Promise((_, reject) => setTimeout(
+            () => reject(new Error("Timeout aguardando stop_project.")),
+            2000,
+          )),
+        ]).catch(async (error) => {
+          await this.logger.warn("stop_project nao concluiu; aplicando encerramento forcado.", {
+            worktree: record.worktree_name,
+            error: error.message,
+          });
+        });
+      }
+
+      // Encerre primeiro a arvore completa do Godot MCP para nao deixar filhos
+      // orfaos mantendo handles ou cwd dentro da worktree.
+      if (mcpPid && isPidAlive(mcpPid)) {
+        await terminateProcessTree(mcpPid, this.config, this.logger, "godot-mcp");
+      }
+      if (runtime?.mcp) {
+        await runtime.mcp.close().catch(async (error) => {
+          await this.logger.warn("Falha no cleanup do cliente Godot MCP.", {
+            worktree: record.worktree_name,
+            error: error.message,
+          });
+        });
+      }
+
+      if (godotPid && isPidAlive(godotPid)) {
+        await terminateProcessTree(godotPid, this.config, this.logger, record.host_project_path);
+      }
+
+      runtime?.stdout?.end();
+      runtime?.stderr?.end();
+      this.runtime.delete(record.worktree_name);
+      record.godot_pid = null;
+      record.godot_mcp_pid = null;
+      record.status = "stopped";
+      record.updated_at = now();
+      await this.#persist(record);
+      await this.logger.info("Servicos da worktree encerrados e handles liberados.", {
+        worktree: record.worktree_name,
+        reason,
+      });
+    } catch (error) {
+      record.status = "failed";
+      record.last_error = `Falha ao liberar processos da worktree: ${error.message}`;
+      await this.#persist(record);
+      await this.logger.error("Falha ao liberar a worktree.", {
+        worktree: record.worktree_name,
+        reason,
+        error: error.message,
+      });
+      throw error;
+    }
   }
 
   async #validateProject(hostPath) {
