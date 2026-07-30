@@ -3,6 +3,7 @@ import { loadConfig } from "./config.mjs";
 import { Logger } from "./logger.mjs";
 import { RawMcpServer } from "./raw-mcp-server.mjs";
 import { buildTools } from "./tools.mjs";
+import { isSafeToRetrySupervisorTool, supervisorRequestTimeoutMs } from "./mcp-facade-policy.mjs";
 
 const { values } = parseArgs({
   options: { config: { type: "string" } },
@@ -19,8 +20,10 @@ function sleep(milliseconds) {
 async function callSupervisor(name, args) {
   const url =
     `http://127.0.0.1:${config.service.controlPort}/api/v1/tools/call`;
-  const retryDelays = [0, 250, 500, 1000, 2000, 3000];
+  const safeToRetry = isSafeToRetrySupervisorTool(name);
+  const retryDelays = safeToRetry ? [0, 250, 500, 1000, 2000, 3000] : [0];
   const retryableStatusCodes = new Set([502, 503, 504]);
+  const timeoutMs = supervisorRequestTimeoutMs(config, name);
   let lastError = null;
 
   for (const delay of retryDelays) {
@@ -38,10 +41,16 @@ async function callSupervisor(name, args) {
           "X-API-Key": config.service.apiKey,
         },
         body: JSON.stringify({ name, arguments: args ?? {} }),
-        signal: AbortSignal.timeout(10000),
+        signal: AbortSignal.timeout(timeoutMs),
       });
     } catch (error) {
       lastError = error;
+      if (!safeToRetry) {
+        throw new Error(
+          `Falha chamando ${name} no supervisor após ${timeoutMs} ms: ${error.message}. ` +
+          "A operação pode continuar no supervisor; não repita automaticamente sem consultar o status/log.",
+        );
+      }
       continue;
     }
 
@@ -57,7 +66,7 @@ async function callSupervisor(name, args) {
       payload.error || `Supervisor retornou HTTP ${response.status}.`,
     );
 
-    if (!retryableStatusCodes.has(response.status)) {
+    if (!safeToRetry || !retryableStatusCodes.has(response.status)) {
       throw responseError;
     }
 
