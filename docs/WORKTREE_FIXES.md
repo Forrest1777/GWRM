@@ -25,3 +25,14 @@ Sintaxe JavaScript válida
 ## Limite da garantia
 
 `directory_released: true` confirma que o GWRM encerrou seus processos conhecidos e não encontrou processos Godot cuja linha de comando ainda referencie a worktree. Software externo, antivírus, Explorer ou ferramentas não iniciadas pelo GWRM ainda podem manter handles; nesses casos, o erro deve ser investigado no host.
+
+## Correção v2 — probe PowerShell de processos residuais
+
+A primeira versão do probe compunha várias linhas com `Array.join("; ")`. Como
+duas linhas terminavam com `-and`, o comando resultante continha `-and;`, que é
+inválido no Windows PowerShell 5.1 e causava `ExpectedValueExpression` durante
+`activate_worktree` e `deactivate_worktree`.
+
+A versão v2 mantém todo o predicado de `Where-Object` em uma única instrução,
+exporta `buildWindowsProcessPathProbeScript()` para teste e inclui regressão
+automática que proíbe `-and;` e `-or;`.

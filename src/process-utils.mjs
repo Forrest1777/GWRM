@@ -129,24 +129,35 @@ function escapePowerShellSingleQuoted(value) {
   return String(value).replaceAll("'", "''");
 }
 
-export async function listWindowsProcessesReferencingPath(pathFragment, config, processNames = []) {
-  if (process.platform !== "win32" || !pathFragment) return [];
-
+export function buildWindowsProcessPathProbeScript(pathFragment, processNames = []) {
   const needle = escapePowerShellSingleQuoted(pathFragment);
   const normalizedNames = processNames
     .filter((name) => typeof name === "string" && name.trim())
     .map((name) => name.trim().toLowerCase());
   const namesJson = escapePowerShellSingleQuoted(JSON.stringify(normalizedNames));
-  const script = [
+
+  // Mantenha o predicado inteiro em uma única instrução. A versão anterior
+  // juntava linhas com "; " e gerava tokens inválidos como "-and;" no
+  // Windows PowerShell 5.1.
+  const predicate = [
+    `($_.ProcessId -ne $PID)`,
+    `($null -ne $_.CommandLine)`,
+    `($_.CommandLine.IndexOf($needle,[System.StringComparison]::OrdinalIgnoreCase) -ge 0)`,
+    `(($allowed.Count -eq 0) -or ($allowed -contains $_.Name.ToLowerInvariant()))`,
+  ].join(" -and ");
+
+  return [
     `$needle='${needle}'`,
     `$allowed=ConvertFrom-Json '${namesJson}'`,
-    `$items=Get-CimInstance Win32_Process | Where-Object {`,
-    `  $_.ProcessId -ne $PID -and $_.CommandLine -and`,
-    `  $_.CommandLine.IndexOf($needle,[System.StringComparison]::OrdinalIgnoreCase) -ge 0 -and`,
-    `  ($allowed.Count -eq 0 -or $allowed -contains $_.Name.ToLowerInvariant())`,
-    `} | Select-Object ProcessId,Name,CommandLine`,
+    `$items=Get-CimInstance Win32_Process | Where-Object { ${predicate} } | Select-Object ProcessId,Name,CommandLine`,
     `if($items){$items | ConvertTo-Json -Compress}else{'[]'}`,
   ].join("; ");
+}
+
+export async function listWindowsProcessesReferencingPath(pathFragment, config, processNames = []) {
+  if (process.platform !== "win32" || !pathFragment) return [];
+
+  const script = buildWindowsProcessPathProbeScript(pathFragment, processNames);
 
   const result = await runAndCapture(
     config.paths.powershellExecutable,
