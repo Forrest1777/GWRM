@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import readline from "node:readline";
+import { once } from "node:events";
 
 export class StdioMcpClient {
   constructor({ command, args, cwd, env, protocolVersion, startupTimeoutMs, requestTimeoutMs, logger, label }) {
@@ -121,13 +122,24 @@ export class StdioMcpClient {
     try { this.child.stderr?.destroy(); } catch {}
 
     // O SessionManager encerra a arvore com taskkill /T antes deste cleanup.
-    // Este kill e apenas um fallback para usos isolados do cliente.
+    // Este kill e um fallback para usos isolados do cliente, mas o metodo so
+    // retorna depois que o processo realmente emitir close ou o timeout expirar.
     if (this.child.exitCode === null) {
       try { this.child.kill("SIGTERM"); } catch {}
-      await new Promise((resolve) => setTimeout(resolve, 300));
+      await Promise.race([
+        once(this.child, "close").catch(() => []),
+        new Promise((resolve) => setTimeout(resolve, 500)),
+      ]);
     }
     if (this.child.exitCode === null) {
       try { this.child.kill("SIGKILL"); } catch {}
+      await Promise.race([
+        once(this.child, "close").catch(() => []),
+        new Promise((resolve) => setTimeout(resolve, 2000)),
+      ]);
+    }
+    if (this.child.exitCode === null) {
+      throw new Error(`Godot MCP ${this.label} permaneceu ativo apos cleanup.`);
     }
   }
 

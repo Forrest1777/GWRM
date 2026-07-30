@@ -123,3 +123,62 @@ export function runAndCapture(command, args, timeoutMs, options = {}) {
     });
   });
 }
+
+
+function escapePowerShellSingleQuoted(value) {
+  return String(value).replaceAll("'", "''");
+}
+
+export async function listWindowsProcessesReferencingPath(pathFragment, config, processNames = []) {
+  if (process.platform !== "win32" || !pathFragment) return [];
+
+  const needle = escapePowerShellSingleQuoted(pathFragment);
+  const normalizedNames = processNames
+    .filter((name) => typeof name === "string" && name.trim())
+    .map((name) => name.trim().toLowerCase());
+  const namesJson = escapePowerShellSingleQuoted(JSON.stringify(normalizedNames));
+  const script = [
+    `$needle='${needle}'`,
+    `$allowed=ConvertFrom-Json '${namesJson}'`,
+    `$items=Get-CimInstance Win32_Process | Where-Object {`,
+    `  $_.ProcessId -ne $PID -and $_.CommandLine -and`,
+    `  $_.CommandLine.IndexOf($needle,[System.StringComparison]::OrdinalIgnoreCase) -ge 0 -and`,
+    `  ($allowed.Count -eq 0 -or $allowed -contains $_.Name.ToLowerInvariant())`,
+    `} | Select-Object ProcessId,Name,CommandLine`,
+    `if($items){$items | ConvertTo-Json -Compress}else{'[]'}`,
+  ].join("; ");
+
+  const result = await runAndCapture(
+    config.paths.powershellExecutable,
+    ["-NoProfile", "-NonInteractive", "-Command", script],
+    15000,
+  );
+  if (result.code !== 0) {
+    throw new Error(`Falha ao consultar processos residuais: ${result.stderr.trim() || result.stdout.trim()}`);
+  }
+  const parsed = JSON.parse(result.stdout.trim() || "[]");
+  const rows = Array.isArray(parsed) ? parsed : [parsed];
+  return rows.map((row) => ({
+    pid: Number(row.ProcessId),
+    name: String(row.Name || ""),
+    command_line: String(row.CommandLine || ""),
+  })).filter((row) => Number.isInteger(row.pid) && row.pid > 0);
+}
+
+export async function terminateWindowsProcessesReferencingPath(pathFragment, config, logger, processNames = []) {
+  if (process.platform !== "win32") return { terminated: [], residual: [] };
+  const found = await listWindowsProcessesReferencingPath(pathFragment, config, processNames);
+  const terminated = [];
+  for (const processInfo of found) {
+    if (!isPidAlive(processInfo.pid)) continue;
+    await logger.warn("Processo residual associado a worktree sera encerrado.", {
+      pid: processInfo.pid,
+      name: processInfo.name,
+      path: pathFragment,
+    });
+    await terminateProcessTree(processInfo.pid, config, logger);
+    terminated.push(processInfo.pid);
+  }
+  const residual = await listWindowsProcessesReferencingPath(pathFragment, config, processNames);
+  return { terminated, residual };
+}

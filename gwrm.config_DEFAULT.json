@@ -17,8 +17,8 @@
                   "godot_executable":  "E:\\dev\\IDE\\win64-g43-s161-gs412-mp-d3d12\\Godot_v4.6-stable_win64_console.exe",
                   "windows_workspace_root":  "E:\\dev\\ai_agents\\hermes\\workspace",
                   "container_workspace_root":  "/workspace",
-                  "windows_worktrees_root":  "E:\\dev\\ai_agents\\hermes\\workspace\\kanban-worktrees",
-                  "container_worktrees_root":  "/workspace/kanban-worktrees",
+                  "windows_worktrees_root":  "E:\\dev\\ai_agents\\hermes\\workspace\\skill_system_framework\\.worktrees",
+                  "container_worktrees_root":  "/workspace/skill_system_framework/.worktrees",
                   "state_directory":  "./state",
                   "logs_directory":  "./logs"
               },

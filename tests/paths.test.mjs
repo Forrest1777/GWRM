@@ -6,13 +6,13 @@ import { resolveWorktreePaths, validateResPath, validateWorktreeName } from "../
 const config = {
   paths: {
     windowsWorktreesRoot: path.resolve("/tmp/worktrees"),
-    containerWorktreesRoot: "/workspace/kanban-worktrees",
+    containerWorktreesRoot: "/workspace/skill_system_framework/.worktrees",
   },
 };
 
 test("resolve worktree paths", () => {
   const result = resolveWorktreePaths("t_abc-123", config);
-  assert.equal(result.containerPath, "/workspace/kanban-worktrees/t_abc-123");
+  assert.equal(result.containerPath, "/workspace/skill_system_framework/.worktrees/t_abc-123");
   assert.equal(result.hostPath, path.resolve("/tmp/worktrees/t_abc-123"));
 });
 

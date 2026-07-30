@@ -32,3 +32,8 @@ Cada worktree possui `state/<worktree_name>.json`. Worktrees ativas sao restaura
 ## Isolamento
 
 Cada Godot MCP e um subprocesso stdio independente, portanto seu `activeProcess` pertence somente a uma worktree. `run_project`, `get_debug_output` e `stop_project` nao compartilham estado entre agentes.
+
+
+## Integridade e cleanup
+
+O dispatcher do Hermes materializa a worktree. O worker deve executar `worktree-preflight` antes de ativar o GWRM. Na desativação, o GWRM encerra relay, projeto, árvore do Godot MCP e Godot headless, procura processos Godot residuais que ainda referenciem o path, aguarda streams e só então publica `status: stopped`, `residual_pids: []` e `directory_released: true`. Registros persistentes têm seus paths atualizados quando a raiz configurada muda.

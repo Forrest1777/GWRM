@@ -96,7 +96,7 @@ def _derive_worktree(project_path: str, container_root: str) -> str | None:
 def _gwrm_status(project_path: str | None = None) -> dict[str, Any]:
     env = _server_env()
     project = str(Path(project_path or os.getcwd()).resolve())
-    worktrees_root = _setting(env, "GWRM_CONTAINER_WORKTREES_ROOT", "/workspace/kanban-worktrees")
+    worktrees_root = _setting(env, "GWRM_CONTAINER_WORKTREES_ROOT", "/workspace/skill_system_framework/.worktrees")
     worktree = _setting(env, "GWRM_WORKTREE_NAME") or _derive_worktree(project, worktrees_root)
     control_url = _setting(env, "GWRM_CONTROL_URL", "http://host.docker.internal:8130").rstrip("/")
     api_key = _setting(env, "GWRM_API_KEY")

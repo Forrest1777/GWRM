@@ -7,10 +7,11 @@ description: Desenvolvimento e verificacao de worktrees Godot/GDScript usando GW
 
 ## Inicio e encerramento
 
-1. Resolva `worktree_name` a partir de `HERMES_KANBAN_WORKSPACE`.
-2. Chame `activate_worktree` e aguarde `status: ready` antes de trabalhar com GDScript.
-3. Use sempre a mesma `worktree_name` nas tools Godot e GUT.
-4. Chame `deactivate_worktree` antes de concluir ou devolver o card.
+1. Valide a worktree já provisionada pelo dispatcher com a skill `worktree-preflight`.
+2. Resolva `worktree_name` a partir do basename de `HERMES_KANBAN_WORKSPACE`.
+3. Chame `activate_worktree` e aguarde `status: ready` antes de trabalhar com GDScript.
+4. Use sempre a mesma `worktree_name` nas tools Godot e GUT.
+5. Chame `deactivate_worktree` antes de concluir ou devolver o card e confirme `stopped`, sem PIDs residuais.
 
 O worker nao inicia Godot, nao escolhe portas e nao converte caminhos manualmente.
 

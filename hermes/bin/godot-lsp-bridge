@@ -112,7 +112,7 @@ def derive_worktree(project_root: str, worktrees_root: str) -> str | None:
 
 def ensure_session() -> tuple[str, int]:
     project_root = setting("GWRM_PROJECT_ROOT", os.getcwd())
-    worktrees_root = setting("GWRM_CONTAINER_WORKTREES_ROOT", "/workspace/kanban-worktrees")
+    worktrees_root = setting("GWRM_CONTAINER_WORKTREES_ROOT", "/workspace/skill_system_framework/.worktrees")
     worktree = setting("GWRM_WORKTREE_NAME") or derive_worktree(project_root, worktrees_root)
     if not worktree: raise BridgeError(f"Nao foi possivel derivar worktree de {project_root}.")
     control = setting("GWRM_CONTROL_URL", "http://host.docker.internal:8130").rstrip("/")
