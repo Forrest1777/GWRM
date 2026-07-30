@@ -3,11 +3,12 @@ import assert from "node:assert/strict";
 import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { Logger } from "../src/logger.mjs";
 import { SessionManager } from "../src/session-manager.mjs";
 import { GutRunner } from "../src/gut-runner.mjs";
 
-const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 test("activate, route MCP, run GUT and deactivate isolated worktree", { timeout: 20000 }, async () => {
   const temp = await mkdtemp(path.join(os.tmpdir(), "gwrm-test-"));

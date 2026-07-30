@@ -5,9 +5,11 @@ import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import readline from "node:readline";
+import { once } from "node:events";
 
-const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 async function freePort() {
   const server = net.createServer();
@@ -17,16 +19,35 @@ async function freePort() {
   return port;
 }
 
-async function waitHealth(port) {
-  const deadline = Date.now() + 5000;
+async function waitHealth(port, child, stderrBuffer) {
+  const deadline = Date.now() + 12000;
   while (Date.now() < deadline) {
+    if (child.exitCode !== null || child.signalCode !== null) {
+      throw new Error(`supervisor exited before health check: code=${child.exitCode} signal=${child.signalCode} stderr=${stderrBuffer()}`);
+    }
     try { if ((await fetch(`http://127.0.0.1:${port}/health`)).ok) return; } catch {}
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
-  throw new Error("supervisor not ready");
+  throw new Error(`supervisor not ready; stderr=${stderrBuffer()}`);
 }
 
-test("MCP facade delegates to singleton supervisor", { timeout: 15000 }, async () => {
+async function stopChild(child, timeoutMs = 5000) {
+  if (!child || child.exitCode !== null || child.signalCode !== null) return;
+  const closed = once(child, "close").catch(() => []);
+  try { child.kill("SIGTERM"); } catch {}
+  const result = await Promise.race([
+    closed.then(() => true),
+    new Promise((resolve) => setTimeout(() => resolve(false), timeoutMs)),
+  ]);
+  if (result) return;
+  try { child.kill("SIGKILL"); } catch {}
+  await Promise.race([
+    once(child, "close").catch(() => []),
+    new Promise((resolve) => setTimeout(resolve, 2000)),
+  ]);
+}
+
+test("MCP facade delegates to singleton supervisor", { timeout: 30000 }, async () => {
   const temp = await mkdtemp(path.join(os.tmpdir(), "gwrm-facade-"));
   const worktrees = path.join(temp, "worktrees");
   await mkdir(worktrees, { recursive: true });
@@ -45,11 +66,21 @@ test("MCP facade delegates to singleton supervisor", { timeout: 15000 }, async (
   const configPath = path.join(temp, "config.json");
   await writeFile(configPath, JSON.stringify(config));
 
-  const supervisor = spawn(process.execPath, [path.join(root, "src", "supervisor.mjs"), "--config", configPath], { stdio: ["ignore", "pipe", "pipe"] });
+  const supervisor = spawn(process.execPath, [path.join(root, "src", "supervisor.mjs"), "--config", configPath], {
+    stdio: ["ignore", "pipe", "pipe"],
+    windowsHide: true,
+  });
+  let supervisorStderr = "";
+  supervisor.stderr.on("data", (chunk) => { supervisorStderr += chunk.toString("utf8"); });
+  let facade = null;
+  let rl = null;
   try {
-    await waitHealth(controlPort);
-    const facade = spawn(process.execPath, [path.join(root, "src", "mcp-facade.mjs"), "--config", configPath], { stdio: ["pipe", "pipe", "pipe"] });
-    const rl = readline.createInterface({ input: facade.stdout, crlfDelay: Infinity });
+    await waitHealth(controlPort, supervisor, () => supervisorStderr.slice(-4000));
+    facade = spawn(process.execPath, [path.join(root, "src", "mcp-facade.mjs"), "--config", configPath], {
+      stdio: ["pipe", "pipe", "pipe"],
+      windowsHide: true,
+    });
+    rl = readline.createInterface({ input: facade.stdout, crlfDelay: Infinity });
     const messages = [];
     rl.on("line", (line) => messages.push(JSON.parse(line)));
     facade.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "test", version: "1" } } })}\n`);
@@ -60,10 +91,11 @@ test("MCP facade delegates to singleton supervisor", { timeout: 15000 }, async (
     const payload = JSON.parse(messages[1].result.content[0].text);
     assert.equal(payload.ready, true);
     assert.equal(payload.service, "GWRM-test");
-    facade.kill("SIGTERM");
   } finally {
-    supervisor.kill("SIGTERM");
-    await new Promise((resolve) => setTimeout(resolve, 500));
+    rl?.close();
+    if (facade?.stdin && !facade.stdin.destroyed) facade.stdin.end();
+    await stopChild(facade);
+    await stopChild(supervisor);
     await rm(temp, { recursive: true, force: true });
   }
 });

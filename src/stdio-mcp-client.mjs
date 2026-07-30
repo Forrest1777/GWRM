@@ -2,6 +2,14 @@ import { spawn } from "node:child_process";
 import readline from "node:readline";
 import { once } from "node:events";
 
+async function waitForChildClose(child, timeoutMs) {
+  if (!child || child.exitCode !== null || child.signalCode !== null) return true;
+  return await Promise.race([
+    once(child, "close").then(() => true).catch(() => true),
+    new Promise((resolve) => setTimeout(() => resolve(false), timeoutMs)),
+  ]);
+}
+
 export class StdioMcpClient {
   constructor({ command, args, cwd, env, protocolVersion, startupTimeoutMs, requestTimeoutMs, logger, label }) {
     this.command = command;
@@ -109,38 +117,42 @@ export class StdioMcpClient {
   }
 
   async close() {
-    if (this.closed) {
+    const child = this.child;
+    this.closed = true;
+    this.#failAll(new Error(`Godot MCP ${this.label} foi encerrado.`));
+
+    if (!child) {
       this.readline?.close();
       return;
     }
 
-    this.closed = true;
-    this.readline?.close();
-    this.#failAll(new Error(`Godot MCP ${this.label} foi encerrado.`));
-    try { this.child.stdin.end(); } catch {}
-    try { this.child.stdout?.destroy(); } catch {}
-    try { this.child.stderr?.destroy(); } catch {}
+    // Feche a entrada, mas preserve stdout/stderr ate o evento `close` do
+    // ChildProcess. Destruir os pipes enquanto o Windows ainda entrega o
+    // callback de encerramento pode disparar asserts nativos em versoes novas
+    // do Node durante testes e shutdown rapido.
+    try { child.stdin?.end(); } catch {}
 
-    // O SessionManager encerra a arvore com taskkill /T antes deste cleanup.
-    // Este kill e um fallback para usos isolados do cliente, mas o metodo so
-    // retorna depois que o processo realmente emitir close ou o timeout expirar.
-    if (this.child.exitCode === null) {
-      try { this.child.kill("SIGTERM"); } catch {}
-      await Promise.race([
-        once(this.child, "close").catch(() => []),
-        new Promise((resolve) => setTimeout(resolve, 500)),
-      ]);
+    // O SessionManager normalmente ja executou taskkill /T. Aguarde primeiro
+    // o callback correspondente antes de enviar outro sinal pelo Node.
+    let closed = await waitForChildClose(child, 750);
+    if (!closed) {
+      try { child.kill("SIGTERM"); } catch {}
+      closed = await waitForChildClose(child, 1500);
     }
-    if (this.child.exitCode === null) {
-      try { this.child.kill("SIGKILL"); } catch {}
-      await Promise.race([
-        once(this.child, "close").catch(() => []),
-        new Promise((resolve) => setTimeout(resolve, 2000)),
-      ]);
+    if (!closed) {
+      try { child.kill("SIGKILL"); } catch {}
+      closed = await waitForChildClose(child, 3000);
     }
-    if (this.child.exitCode === null) {
+
+    this.readline?.close();
+    if (!closed) {
       throw new Error(`Godot MCP ${this.label} permaneceu ativo apos cleanup.`);
     }
+
+    // Depois de `close`, estes destroys apenas liberam wrappers locais; nao
+    // interrompem callbacks de processo ainda pendentes.
+    try { child.stdout?.destroy(); } catch {}
+    try { child.stderr?.destroy(); } catch {}
   }
 
   get pid() { return this.child?.pid ?? null; }

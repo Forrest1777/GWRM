@@ -20,12 +20,20 @@ function cloneState(state) { return JSON.parse(JSON.stringify(state)); }
 async function closeWriteStream(stream, timeoutMs = 3000) {
   if (!stream || stream.closed || stream.destroyed) return;
   stream.end();
-  await Promise.race([
-    once(stream, "close").catch(() => []),
-    once(stream, "finish").catch(() => []),
-    new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout fechando stream de log.")), timeoutMs)),
+  const completed = await Promise.race([
+    once(stream, "close").then(() => true).catch(() => true),
+    once(stream, "finish").then(() => true).catch(() => true),
+    new Promise((resolve) => setTimeout(() => resolve(false), timeoutMs)),
   ]);
-  if (!stream.closed && !stream.destroyed) stream.destroy();
+  if (!completed && !stream.closed && !stream.destroyed) stream.destroy();
+}
+
+async function waitForChildProcessClose(child, timeoutMs = 5000) {
+  if (!child || child.exitCode !== null || child.signalCode !== null) return true;
+  return await Promise.race([
+    once(child, "close").then(() => true).catch(() => true),
+    new Promise((resolve) => setTimeout(() => resolve(false), timeoutMs)),
+  ]);
 }
 
 export class SessionManager {
@@ -264,7 +272,14 @@ export class SessionManager {
     godot.stderr.pipe(stderr);
     record.godot_pid = godot.pid;
     this.runtime.set(record.worktree_name, { godot, stdout, stderr, mcp: null, relay: null });
-    godot.once("close", (code, signal) => this.#onGodotExit(record.worktree_name, code, signal));
+    godot.once("close", (code, signal) => {
+      this.#onGodotExit(record.worktree_name, code, signal).catch((error) => {
+        this.logger.error("Falha tratando encerramento do Godot.", {
+          worktree: record.worktree_name,
+          error: error.message,
+        });
+      });
+    });
 
     try {
       await waitForPort(this.config.godot.localReadyHost, record.godot_lsp_port, this.config.sessions.readyTimeoutSeconds * 1000, godot);
@@ -311,11 +326,14 @@ export class SessionManager {
     const record = this.records.get(name);
     if (!record) return;
     const runtime = this.runtime.get(name);
-    if (runtime) {
-      runtime.stdout?.end();
-      runtime.stderr?.end();
-    }
+    // Durante shutdown, #stopRuntime e o unico dono do fechamento de streams.
+    // Isso evita dois callbacks encerrando os mesmos pipes simultaneamente no
+    // Windows enquanto o ChildProcess ainda entrega o evento `close`.
     if (record.status === "stopping" || !record.desired_active) return;
+    await Promise.allSettled([
+      closeWriteStream(runtime?.stdout),
+      closeWriteStream(runtime?.stderr),
+    ]);
     record.status = "failed";
     record.last_error = `Godot encerrou: codigo=${code}, sinal=${signal}`;
     record.godot_pid = null;
@@ -363,6 +381,15 @@ export class SessionManager {
 
       if (godotPid && isPidAlive(godotPid)) {
         await terminateProcessTree(godotPid, this.config, this.logger, record.host_project_path);
+      }
+      if (runtime?.godot) {
+        const godotClosed = await waitForChildProcessClose(
+          runtime.godot,
+          this.config.service.shutdownTimeoutSeconds * 1000,
+        );
+        if (!godotClosed) {
+          throw new Error(`Callback de encerramento do Godot nao concluiu para PID ${godotPid}.`);
+        }
       }
 
       // Fallback direcionado: encerra somente processos Godot cuja linha de
