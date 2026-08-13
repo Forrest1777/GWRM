@@ -1,6 +1,7 @@
 const SAFE_RETRY_TOOLS = new Set([
   "gwrm_status",
   "get_worktree_status",
+  "get_gut_run_status",
   "get_debug_output",
   "get_godot_version",
   "list_projects",
@@ -14,8 +15,8 @@ export function isSafeToRetrySupervisorTool(name) {
 export function supervisorRequestTimeoutMs(config, name) {
   const bufferSeconds = 30;
 
-  if (name === "run_gut_tests" || name === "run_gut_test_script") {
-    return (config.gut.timeoutSeconds + bufferSeconds) * 1000;
+  if (name === "run_gut_tests" || name === "run_gut_test_script" || name === "get_gut_run_status") {
+    return 60_000;
   }
 
   if (name === "activate_worktree") {

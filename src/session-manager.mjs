@@ -84,6 +84,8 @@ export class SessionManager {
       const paths = resolveWorktreePaths(name, this.config);
       await this.#validateProject(paths.hostPath);
       let record = this.records.get(name) || this.#newRecord(paths);
+      const previousGodotPid = record.godot_pid;
+      const previousMcpPid = record.godot_mcp_pid;
       record.host_project_path = paths.hostPath;
       record.container_project_path = paths.containerPath;
       record.residual_pids = [];
@@ -95,7 +97,16 @@ export class SessionManager {
       this.records.set(name, record);
       await this.#persist(record);
       await this.#ensureRunning(record);
-      return this.getStatus(name);
+      const status = this.getStatus(name);
+      return {
+        ...status,
+        reused_existing_runtime: Boolean(
+          previousGodotPid
+          && previousMcpPid
+          && previousGodotPid === status.godot_pid
+          && previousMcpPid === status.godot_mcp_pid
+        ),
+      };
     });
   }
 
@@ -106,7 +117,19 @@ export class SessionManager {
   async deactivateWorktree(name, source = "mcp") {
     return await this.#withLock(name, async () => {
       const record = this.records.get(name);
-      if (!record) return { worktree_name: name, desired_active: false, status: "not_registered" };
+      if (!record) return { ...this.getStatus(name), already_inactive: true };
+
+      const runtime = this.runtime.get(name);
+      if (
+        !record.desired_active
+        && !runtime
+        && record.status === "stopped"
+        && record.directory_released
+        && (!record.residual_pids || record.residual_pids.length === 0)
+      ) {
+        return { ...this.getStatus(name), already_inactive: true };
+      }
+
       record.desired_active = false;
       const shutdownDelay = this.config.sessions.inactiveShutdownDelaySeconds ?? 0;
       record.shutdown_not_before = shutdownDelay > 0
@@ -116,16 +139,37 @@ export class SessionManager {
       record.last_request_source = source;
       await this.#persist(record);
       if (shutdownDelay === 0) await this.#stopRuntime(record, "deactivated");
-      return this.getStatus(name);
+      return { ...this.getStatus(name), already_inactive: false };
     });
   }
 
   getStatus(name) {
     const record = this.records.get(name);
-    if (!record) return null;
+    if (!record) {
+      return {
+        worktree_name: name,
+        registered: false,
+        desired_active: false,
+        status: "not_registered",
+        residual_pids: [],
+        directory_released: true,
+        godot_pid: null,
+        godot_mcp_pid: null,
+        lsp: {
+          host: this.config.godot.lspHostForHermes,
+          port: null,
+          godot_internal_port: null,
+          ready: false,
+        },
+        dap: { host: this.config.godot.lspHostForHermes, port: null },
+        godot_mcp_ready: false,
+        project_started: false,
+      };
+    }
     const runtime = this.runtime.get(name);
     return {
       ...cloneState(record),
+      registered: true,
       lsp: {
         host: this.config.godot.lspHostForHermes,
         port: record.lsp_port,
@@ -134,6 +178,7 @@ export class SessionManager {
       },
       dap: { host: this.config.godot.lspHostForHermes, port: record.dap_port },
       godot_mcp_ready: Boolean(runtime?.mcp?.isAlive),
+      project_started: Boolean(runtime?.projectStarted),
     };
   }
 
@@ -142,12 +187,46 @@ export class SessionManager {
   }
 
   async callGodotTool(name, toolName, args) {
+    if (toolName === "stop_project") return await this.stopProject(name);
+    if (toolName === "get_debug_output") {
+      const runtime = this.runtime.get(name);
+      if (!runtime?.mcp?.isAlive || !runtime.projectStarted) {
+        return {
+          worktree_name: name,
+          status: "not_running",
+          project_started: false,
+          output: "",
+        };
+      }
+    }
+
     const session = await this.ensureWorktree(name, `tool:${toolName}`);
     const runtime = this.runtime.get(name);
     if (!runtime?.mcp?.isAlive) throw new Error(`Godot MCP dedicado de ${name} nao esta pronto.`);
     if (!runtime.mcp.hasTool(toolName)) throw new Error(`A versao instalada do Godot MCP nao oferece a tool '${toolName}'.`);
     const upstreamArgs = this.#mapGodotArguments(toolName, args, session.host_project_path);
-    return await runtime.mcp.callTool(toolName, upstreamArgs);
+    const result = await runtime.mcp.callTool(toolName, upstreamArgs);
+    if (toolName === "run_project") runtime.projectStarted = true;
+    return result;
+  }
+
+  async stopProject(name) {
+    return await this.#withLock(name, async () => {
+      const runtime = this.runtime.get(name);
+      if (!runtime?.mcp?.isAlive || !runtime.projectStarted) {
+        return {
+          worktree_name: name,
+          status: "already_stopped",
+          project_started: false,
+        };
+      }
+      if (!runtime.mcp.hasTool("stop_project")) {
+        throw new Error(`A versao instalada do Godot MCP nao oferece a tool 'stop_project'.`);
+      }
+      const result = await runtime.mcp.callTool("stop_project", {});
+      runtime.projectStarted = false;
+      return result;
+    });
   }
 
   async reconcileAll(reason) {
@@ -228,7 +307,13 @@ export class SessionManager {
       return;
     }
 
-    await this.#stopRuntime(record, "restart_before_start");
+    const needsCleanup = Boolean(
+      current
+      || (record.godot_pid && isPidAlive(record.godot_pid))
+      || (record.godot_mcp_pid && isPidAlive(record.godot_mcp_pid))
+      || (Array.isArray(record.residual_pids) && record.residual_pids.length > 0)
+    );
+    if (needsCleanup) await this.#stopRuntime(record, "restart_before_start");
     await this.#validateProject(record.host_project_path);
     record.status = "starting";
     record.last_error = null;
@@ -271,7 +356,7 @@ export class SessionManager {
     godot.stdout.pipe(stdout);
     godot.stderr.pipe(stderr);
     record.godot_pid = godot.pid;
-    this.runtime.set(record.worktree_name, { godot, stdout, stderr, mcp: null, relay: null });
+    this.runtime.set(record.worktree_name, { godot, stdout, stderr, mcp: null, relay: null, projectStarted: false });
     godot.once("close", (code, signal) => {
       this.#onGodotExit(record.worktree_name, code, signal).catch((error) => {
         this.logger.error("Falha tratando encerramento do Godot.", {
@@ -359,14 +444,16 @@ export class SessionManager {
         await runtime.relay.close();
       }
 
-      if (runtime?.mcp?.isAlive && runtime.mcp.hasTool("stop_project")) {
+      if (runtime?.projectStarted && runtime?.mcp?.isAlive && runtime.mcp.hasTool("stop_project")) {
         await Promise.race([
           runtime.mcp.callTool("stop_project", {}),
           new Promise((_, reject) => setTimeout(
             () => reject(new Error("Timeout aguardando stop_project.")),
             2000,
           )),
-        ]).catch(async (error) => {
+        ]).then(() => {
+          runtime.projectStarted = false;
+        }).catch(async (error) => {
           await this.logger.warn("stop_project nao concluiu; aplicando encerramento forcado.", {
             worktree: record.worktree_name,
             error: error.message,

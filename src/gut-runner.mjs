@@ -250,6 +250,7 @@ export class GutRunner {
     this.sessionManager = sessionManager;
     this.logger = logger;
     this.semaphore = new Semaphore(config.gut.maxConcurrentProcesses);
+    this.operations = new Map();
   }
 
   async runDirectory(worktreeName, testDirectory) {
@@ -262,8 +263,107 @@ export class GutRunner {
     return await this.#run(worktreeName, { type: "script", value: safe });
   }
 
-  async #run(worktreeName, selection) {
+  startDirectory(worktreeName, testDirectory) {
+    const safe = validateResPath(testDirectory || this.config.gut.defaultTestDirectory, this.config.gut.allowedTestRoot, "test_directory");
+    return this.#startOperation(worktreeName, { type: "directory", value: safe });
+  }
+
+  startScript(worktreeName, testScript) {
+    const safe = validateResPath(testScript, this.config.gut.allowedTestRoot, "test_script");
+    return this.#startOperation(worktreeName, { type: "script", value: safe });
+  }
+
+  getOperation(operationId) {
+    const operation = this.operations.get(String(operationId || ""));
+    if (!operation) {
+      return {
+        operation_id: String(operationId || ""),
+        status: "not_found",
+        terminal: true,
+      };
+    }
+    return this.#publicOperation(operation);
+  }
+
+  #startOperation(worktreeName, selection) {
+    const key = JSON.stringify([worktreeName, selection.type, selection.value]);
+    for (const operation of this.operations.values()) {
+      if (operation.key === key && (operation.status === "queued" || operation.status === "running")) {
+        return { ...this.#publicOperation(operation), reused_existing_operation: true };
+      }
+    }
+
+    this.#pruneOperations();
+    const operation = {
+      operation_id: `gut_${randomUUID()}`,
+      key,
+      worktree_name: worktreeName,
+      selection,
+      status: "queued",
+      terminal: false,
+      created_at: new Date().toISOString(),
+      started_at: null,
+      completed_at: null,
+      result: null,
+      error: null,
+    };
+    this.operations.set(operation.operation_id, operation);
+
+    void this.#run(worktreeName, selection, operation).then((result) => {
+      operation.status = "completed";
+      operation.terminal = true;
+      operation.completed_at = new Date().toISOString();
+      operation.result = result;
+    }).catch(async (error) => {
+      operation.status = "failed";
+      operation.terminal = true;
+      operation.completed_at = new Date().toISOString();
+      operation.error = error instanceof Error ? error.message : String(error);
+      await this.logger.error("Execucao GUT supervisionada falhou.", {
+        operation_id: operation.operation_id,
+        worktree: worktreeName,
+        error: operation.error,
+      });
+    });
+
+    return {
+      ...this.#publicOperation(operation),
+      reused_existing_operation: false,
+      poll_with: "get_gut_run_status",
+    };
+  }
+
+  #publicOperation(operation) {
+    return {
+      operation_id: operation.operation_id,
+      worktree_name: operation.worktree_name,
+      selection: operation.selection,
+      status: operation.status,
+      terminal: operation.terminal,
+      created_at: operation.created_at,
+      started_at: operation.started_at,
+      completed_at: operation.completed_at,
+      result: operation.result,
+      error: operation.error,
+    };
+  }
+
+  #pruneOperations() {
+    const terminal = [...this.operations.values()]
+      .filter((operation) => operation.terminal)
+      .sort((a, b) => String(a.completed_at || "").localeCompare(String(b.completed_at || "")));
+    while (this.operations.size >= 100 && terminal.length > 0) {
+      const oldest = terminal.shift();
+      this.operations.delete(oldest.operation_id);
+    }
+  }
+
+  async #run(worktreeName, selection, operation = null) {
     await this.semaphore.acquire();
+    if (operation) {
+      operation.status = "running";
+      operation.started_at = new Date().toISOString();
+    }
     let junitHostPath = null;
     try {
       const session = await this.sessionManager.ensureWorktree(worktreeName, "gut");
@@ -337,6 +437,7 @@ export class GutRunner {
         stderr: limitOutput(result.stderr, this.config.gut.maxOutputCharacters),
       };
       await this.logger.info("Execucao GUT concluida.", {
+        operation_id: operation?.operation_id || null,
         worktree: worktreeName,
         passed: payload.passed,
         counts: payload.counts,

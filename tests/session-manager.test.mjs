@@ -33,21 +33,60 @@ test("activate, route MCP, run GUT and deactivate isolated worktree", { timeout:
   const sessions = new SessionManager(config, logger);
   await sessions.init();
   try {
+    const missing = sessions.getStatus("t_missing");
+    assert.equal(missing.status, "not_registered");
+    assert.equal(missing.registered, false);
+    const missingStop = await sessions.stopProject("t_missing");
+    assert.equal(missingStop.status, "already_stopped");
+    assert.equal(sessions.getStatus("t_missing").registered, false);
+
     const status = await sessions.activateWorktree("t_test", "test");
     assert.equal(status.status, "ready");
     assert.equal(status.godot_mcp_ready, true);
     assert.notEqual(status.lsp.port, status.lsp.godot_internal_port);
+
+    const repeatedActivation = await sessions.activateWorktree("t_test", "test-repeat");
+    assert.equal(repeatedActivation.status, "ready");
+    assert.equal(repeatedActivation.godot_pid, status.godot_pid);
+    assert.equal(repeatedActivation.godot_mcp_pid, status.godot_mcp_pid);
+    assert.equal(repeatedActivation.reused_existing_runtime, true);
+
+    const noProjectStop = await sessions.stopProject("t_test");
+    assert.equal(noProjectStop.status, "already_stopped");
+    assert.equal(sessions.getStatus("t_test").project_started, false);
+
+    await sessions.callGodotTool("t_test", "run_project", { worktree_name: "t_test" });
+    assert.equal(sessions.getStatus("t_test").project_started, true);
+    await sessions.stopProject("t_test");
+    assert.equal(sessions.getStatus("t_test").project_started, false);
+    const repeatedStop = await sessions.stopProject("t_test");
+    assert.equal(repeatedStop.status, "already_stopped");
 
     const response = await sessions.callGodotTool("t_test", "get_project_info", { worktree_name: "t_test" });
     const body = JSON.parse(response.content[0].text);
     assert.equal(body.args.projectPath, worktree);
 
     const gut = new GutRunner(config, sessions, logger);
-    const result = await gut.runDirectory("t_test", "res://tests/skill_system/ai_system");
-    assert.equal(result.passed, true);
-    assert.equal(result.result_source, "junit_xml");
-    assert.equal(result.junit_xml_generated, true);
-    assert.equal(result.counts.tests, 3);
+    const accepted = gut.startDirectory("t_test", "res://tests/skill_system/ai_system");
+    assert.match(accepted.operation_id, /^gut_/);
+    assert.equal(accepted.terminal, false);
+    assert.equal(accepted.poll_with, "get_gut_run_status");
+
+    const duplicate = gut.startDirectory("t_test", "res://tests/skill_system/ai_system");
+    assert.equal(duplicate.operation_id, accepted.operation_id);
+    assert.equal(duplicate.reused_existing_operation, true);
+
+    let operation = gut.getOperation(accepted.operation_id);
+    const operationDeadline = Date.now() + 5000;
+    while (!operation.terminal && Date.now() < operationDeadline) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      operation = gut.getOperation(accepted.operation_id);
+    }
+    assert.equal(operation.status, "completed");
+    assert.equal(operation.result.passed, true);
+    assert.equal(operation.result.result_source, "junit_xml");
+    assert.equal(operation.result.junit_xml_generated, true);
+    assert.equal(operation.result.counts.tests, 3);
 
     const stopped = await sessions.deactivateWorktree("t_test", "test");
     assert.equal(stopped.desired_active, false);
@@ -55,6 +94,9 @@ test("activate, route MCP, run GUT and deactivate isolated worktree", { timeout:
     assert.deepEqual(stopped.residual_pids, []);
     assert.equal(stopped.directory_released, true);
     assert.equal(stopped.godot_mcp_ready, false);
+    const stoppedAgain = await sessions.deactivateWorktree("t_test", "test-repeat");
+    assert.equal(stoppedAgain.status, "stopped");
+    assert.equal(stoppedAgain.already_inactive, true);
   } finally {
     await sessions.shutdown();
     await rm(temp, { recursive: true, force: true });

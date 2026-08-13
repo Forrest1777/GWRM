@@ -37,3 +37,12 @@ Cada Godot MCP e um subprocesso stdio independente, portanto seu `activeProcess`
 ## Integridade e cleanup
 
 O dispatcher do Hermes materializa a worktree. O worker deve executar `worktree-preflight` antes de ativar o GWRM. Na desativação, o GWRM encerra relay, projeto, árvore do Godot MCP e Godot headless, procura processos Godot residuais que ainda referenciem o path, aguarda streams e só então publica `status: stopped`, `residual_pids: []` e `directory_released: true`. Registros persistentes têm seus paths atualizados quando a raiz configurada muda.
+
+
+## GUT supervisionado
+
+`run_gut_tests` e `run_gut_test_script` nao mantem uma chamada MCP aberta durante toda a execucao. O supervisor registra uma operacao em memoria, inicia o processo GUT sob o semaforo configurado e retorna `operation_id` imediatamente. O cliente consulta `get_gut_run_status` ate `terminal: true`. Chamadas identicas enquanto uma operacao estiver `queued` ou `running` reutilizam o mesmo `operation_id`, evitando execucoes duplicadas apos retry ou timeout de transporte.
+
+## Idempotencia de lifecycle
+
+`activate_worktree` reutiliza o runtime saudavel existente; `deactivate_worktree` retorna imediatamente quando a worktree ja esta totalmente parada; `get_worktree_status` representa worktrees desconhecidas como `not_registered` em vez de erro; e `stop_project` nao ativa uma worktree para para-la e nao encaminha `stop_project` ao Godot MCP quando nenhum `run_project` foi iniciado pelo runtime dedicado.

@@ -11,14 +11,17 @@ export function buildTools() {
     tool("activate_worktree", "Marca uma worktree como ativa e aguarda Godot headless/LSP e Godot MCP dedicado ficarem prontos.", { worktree_name: worktree }, ["worktree_name"]),
     tool("deactivate_worktree", "Marca uma worktree como inativa e encerra seus servicos.", { worktree_name: worktree }, ["worktree_name"]),
     tool("get_worktree_status", "Mostra processos, portas e estado de uma worktree.", { worktree_name: worktree }, ["worktree_name"]),
-    tool("run_gut_tests", "Executa testes GUT por diretorio no projeto da worktree. Valida contagens, falhas, erros e class_name.", {
+    tool("run_gut_tests", "Inicia uma execucao GUT supervisionada por diretorio e retorna imediatamente operation_id. Consulte get_gut_run_status ate terminal=true.", {
       worktree_name: worktree,
       test_directory: string("Diretorio res:// dentro da raiz de testes permitida."),
     }, ["worktree_name"]),
-    tool("run_gut_test_script", "Executa um unico script GUT no projeto da worktree.", {
+    tool("run_gut_test_script", "Inicia uma execucao GUT supervisionada de um unico script e retorna imediatamente operation_id. Consulte get_gut_run_status ate terminal=true.", {
       worktree_name: worktree,
       test_script: string("Caminho res:// completo do script de teste."),
     }, ["worktree_name", "test_script"]),
+    tool("get_gut_run_status", "Consulta uma execucao GUT supervisionada. Quando terminal=true, result contem o resultado final ou error descreve a falha.", {
+      operation_id: string("operation_id retornado por run_gut_tests ou run_gut_test_script."),
+    }, ["operation_id"]),
     tool("launch_editor", "Encaminha launch_editor ao Godot MCP dedicado da worktree. Pode abrir um editor visual adicional.", { worktree_name: worktree }, ["worktree_name"]),
     tool("run_project", "Executa o projeto da worktree pelo Godot MCP dedicado.", { worktree_name: worktree, scene: string("Cena opcional relativa ao projeto.") }, ["worktree_name"]),
     tool("get_debug_output", "Retorna a saida do run_project pertencente somente a esta worktree.", { worktree_name: worktree }, ["worktree_name"]),
@@ -79,13 +82,10 @@ export function buildToolHandler(config, sessionManager, gutRunner) {
     };
     if (name === "activate_worktree") return await sessionManager.activateWorktree(args.worktree_name, "mcp");
     if (name === "deactivate_worktree") return await sessionManager.deactivateWorktree(args.worktree_name, "mcp");
-    if (name === "get_worktree_status") {
-      const status = sessionManager.getStatus(args.worktree_name);
-      if (!status) throw new Error(`Worktree nao registrada: ${args.worktree_name}`);
-      return status;
-    }
-    if (name === "run_gut_tests") return await gutRunner.runDirectory(args.worktree_name, args.test_directory);
-    if (name === "run_gut_test_script") return await gutRunner.runScript(args.worktree_name, args.test_script);
+    if (name === "get_worktree_status") return sessionManager.getStatus(args.worktree_name);
+    if (name === "run_gut_tests") return gutRunner.startDirectory(args.worktree_name, args.test_directory);
+    if (name === "run_gut_test_script") return gutRunner.startScript(args.worktree_name, args.test_script);
+    if (name === "get_gut_run_status") return gutRunner.getOperation(args.operation_id);
     if (GODOT_TOOLS.has(name)) return await sessionManager.callGodotTool(args.worktree_name, name, args);
     throw new Error(`Tool desconhecida: ${name}`);
   };

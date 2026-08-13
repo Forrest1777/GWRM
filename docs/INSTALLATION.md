@@ -23,6 +23,8 @@ Depois, pelo agente, chame:
 activate_worktree(worktree_name="<TASK_ID>")
 get_worktree_status(worktree_name="<TASK_ID>")
 run_gut_tests(worktree_name="<TASK_ID>", test_directory="res://tests/skill_system/ai_system")
+# copie operation_id do retorno e consulte ate terminal=true
+get_gut_run_status(operation_id="<OPERATION_ID>")
 deactivate_worktree(worktree_name="<TASK_ID>")
 ```
 

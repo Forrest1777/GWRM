@@ -50,7 +50,7 @@ export function startControlApi(config, sessionManager, toolHandler, logger) {
       const action = match[2];
       if (req.method === "GET" && !action) {
         const status = sessionManager.getStatus(name);
-        send(res, status ? 200 : 404, status || { error: "not_registered", worktree_name: name });
+        send(res, 200, status);
         return;
       }
       if (req.method !== "POST") { send(res, 405, { error: "method_not_allowed" }); return; }

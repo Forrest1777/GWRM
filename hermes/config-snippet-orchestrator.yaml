@@ -15,5 +15,6 @@ mcp_servers:
         - get_worktree_status
         - run_gut_tests
         - run_gut_test_script
+        - get_gut_run_status
       resources: false
       prompts: false
