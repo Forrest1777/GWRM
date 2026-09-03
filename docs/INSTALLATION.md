@@ -1,33 +1,94 @@
-# Instalacao
+# Installation
 
-1. Extraia a pasta para `E:\dev\ai_agents\GWRM`.
-2. Copie `gwrm.config.example.json` para `gwrm.config.json`.
-3. Ajuste caminhos, portas e limites. Execute `generate-api-key.ps1` para gerar `service.api_key`, ou informe manualmente uma chave com pelo menos 32 caracteres.
-4. Execute `install-dependencies.bat` uma vez, ou deixe `start-gwrm.bat` instalar automaticamente.
-5. Execute `start-gwrm.bat` e mantenha a janela aberta.
-6. Teste `http://localhost:8130/health`.
-7. Execute `hermes\install-hermes-integration.ps1` para instalar o plugin atualizado no worker.
-8. Mescle `hermes\config-snippet-worker.yaml` no profile `implementation-worker`.
-9. Remova ou desabilite as entradas MCP antigas `godot` e `gut`, pois o GWRM as substitui.
-10. Reinicie o container Hermes e inicie uma nova sessao do profile.
+## 1. Requirements
 
-## Teste pelo container
+Install on the Windows host:
+
+- Node.js 20 or newer;
+- Godot 4.x console executable;
+- npm;
+- PowerShell;
+- optional Cua Driver for graphical Computer Use.
+
+Hermes may run in Docker/WSL as long as it can reach the Windows host through the configured MCP and control ports.
+
+## 2. Install source dependencies
+
+From the GWRM directory:
 
 ```powershell
-docker compose exec hermes sh -lc "curl -i http://host.docker.internal:8130/health"
+.\install-dependencies.bat
 ```
 
-Depois, pelo agente, chame:
+or:
+
+```powershell
+npm install --omit=dev
+```
+
+Dependencies are pinned by `package.json`/`package-lock.json` when the lock file is present.
+
+## 3. Create local configuration
+
+Copy the safe example:
+
+```powershell
+Copy-Item .\gwrm.config.example.json .\gwrm.config.json
+```
+
+Generate a local API key:
+
+```powershell
+.\generate-api-key.ps1
+```
+
+Paste the generated value into `service.api_key`.
+
+Configure:
+
+- `paths.godot_executable`
+- `paths.windows_workspace_root`
+- `paths.container_workspace_root`
+- `paths.windows_worktrees_root`
+- `paths.container_worktrees_root`
+
+`gwrm.config.json` is ignored by Git and must remain local.
+
+## 4. Optional Computer Use
+
+Install Cua Driver according to its official installation instructions, then verify:
+
+```powershell
+cua-driver --version
+cua-driver doctor
+```
+
+With `computer_use.required=false`, a missing driver does not prevent the Godot/LSP/GUT parts of GWRM from starting.
+
+## 5. Start and stop
+
+Start:
+
+```powershell
+.\start-gwrm.bat
+```
+
+A healthy startup prints a summary similar to:
 
 ```text
-activate_worktree(worktree_name="<TASK_ID>")
-get_worktree_status(worktree_name="<TASK_ID>")
-run_gut_tests(worktree_name="<TASK_ID>", test_directory="res://tests/skill_system/ai_system")
-# copie operation_id do retorno e consulte ate terminal=true
-get_gut_run_status(operation_id="<OPERATION_ID>")
-deactivate_worktree(worktree_name="<TASK_ID>")
+GWRM READY
+
+Godot Runtime ...... OK
+GUT Runner ......... OK
+Computer Use ....... OK
+Windows Desktop .... OK
+Cua Driver ......... OK
+MCP Port ........... 8123
+Control Port ....... 8130
 ```
 
-## Rede e relay LSP
+Stop the complete stack with `CTRL+C` in the GWRM console.
 
-O Godot escuta localmente na faixa `lsp_start`–`lsp_end`. O GWRM publica um relay na faixa `lsp_proxy_start`–`lsp_proxy_end`, permitindo o acesso do container sem depender do bind configurado no editor Godot. Restrinja essas portas pelo Firewall do Windows ao ambiente local/Docker.
+## 6. Hermes
+
+See `docs/HERMES_INTEGRATION.md` and the files under `hermes/`.

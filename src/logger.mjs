@@ -5,6 +5,10 @@ function sanitize(value) {
   return String(value).replace(/[\r\n]+/g, " ");
 }
 
+function compactTime(iso) {
+  return String(iso).slice(11, 19);
+}
+
 export class Logger {
   constructor(logDirectory) {
     this.logDirectory = logDirectory;
@@ -23,7 +27,8 @@ export class Logger {
       ...fields,
     };
     const line = `${JSON.stringify(entry)}\n`;
-    process.stderr.write(`[GWRM] ${entry.time} ${level.toUpperCase()} ${entry.message}\n`);
+    const worktree = sanitize(fields.worktree || "-");
+    process.stderr.write(`[GWRM] ${compactTime(entry.time)} | ${worktree} | ${level.toUpperCase()} | ${entry.message}\n`);
     await appendFile(this.mainLog, line, "utf8").catch(() => {});
   }
 

@@ -1,22 +1,20 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-
 import { buildWindowsProcessPathProbeScript } from "../src/process-utils.mjs";
 
-test("probe PowerShell nao gera operador -and seguido de separador", () => {
+test("PowerShell process probe never emits an operator followed by a statement separator", () => {
   const script = buildWindowsProcessPathProbeScript(
-    "E:\\dev\\ai_agents\\hermes\\workspace\\skill_system_framework\\.worktrees\\t_123",
-    ["Godot_v4.6-stable_win64_console.exe"],
+    "C:\\workspaces\\project\\.worktrees\\t_123",
+    ["Godot_console.exe"],
   );
-
   assert.equal(script.includes("-and;"), false);
   assert.equal(script.includes("-or;"), false);
   assert.match(script, /Where-Object \{ \(\$_\.ProcessId -ne \$PID\).*\}/);
   assert.match(script, /\$null -ne \$_\.CommandLine/);
 });
 
-test("probe escapa apostrofos em paths e nomes serializados", () => {
-  const script = buildWindowsProcessPathProbeScript("E:\\repo\\o'hare", ["Godot.exe"]);
+test("PowerShell process probe escapes apostrophes", () => {
+  const script = buildWindowsProcessPathProbeScript("C:\\workspaces\\o'hare", ["Godot.exe"]);
   assert.match(script, /o''hare/);
   assert.match(script, /ConvertFrom-Json/);
 });

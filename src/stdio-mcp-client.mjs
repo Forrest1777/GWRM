@@ -11,7 +11,7 @@ async function waitForChildClose(child, timeoutMs) {
 }
 
 export class StdioMcpClient {
-  constructor({ command, args, cwd, env, protocolVersion, startupTimeoutMs, requestTimeoutMs, logger, label }) {
+  constructor({ command, args, cwd, env, protocolVersion, startupTimeoutMs, requestTimeoutMs, logger, label, serverName = "Dedicated Godot MCP" }) {
     this.command = command;
     this.args = args;
     this.cwd = cwd;
@@ -21,6 +21,7 @@ export class StdioMcpClient {
     this.requestTimeoutMs = requestTimeoutMs;
     this.logger = logger;
     this.label = label;
+    this.serverName = serverName;
     this.nextId = 1;
     this.pending = new Map();
     this.tools = [];
@@ -39,13 +40,13 @@ export class StdioMcpClient {
 
     this.child.stderr.on("data", (chunk) => {
       const text = chunk.toString("utf8").trim();
-      if (text) this.logger.info("Saida do Godot MCP dedicado.", { worktree: this.label, text: text.slice(-2000) });
+      if (text) this.logger.info(`Output from ${this.serverName}.`, { worktree: this.label || undefined, component: this.serverName, text: text.slice(-2000) });
     });
     this.child.once("error", (error) => this.#failAll(error));
     this.child.once("close", (code, signal) => {
       this.closed = true;
       this.readline?.close();
-      this.#failAll(new Error(`Godot MCP ${this.label} encerrou (codigo=${code}, sinal=${signal}).`));
+      this.#failAll(new Error(`${this.serverName}${this.label ? ` ${this.label}` : ""} exited (code=${code}, signal=${signal}).`));
     });
 
     this.readline = readline.createInterface({ input: this.child.stdout, crlfDelay: Infinity });
@@ -54,7 +55,7 @@ export class StdioMcpClient {
     await this.request("initialize", {
       protocolVersion: this.protocolVersion,
       capabilities: {},
-      clientInfo: { name: "gwrm", version: "1.0.0" },
+      clientInfo: { name: "gwrm", version: "1.1.0" },
     }, this.startupTimeoutMs);
     this.notify("notifications/initialized", {});
     const listed = await this.request("tools/list", {}, this.startupTimeoutMs);
@@ -67,7 +68,7 @@ export class StdioMcpClient {
     let message;
     try { message = JSON.parse(line); }
     catch {
-      this.logger.warn("Linha nao JSON recebida do Godot MCP.", { worktree: this.label, line: line.slice(0, 1000) });
+      this.logger.warn(`Non-JSON line received from ${this.serverName}.`, { worktree: this.label || undefined, component: this.serverName, line: line.slice(0, 1000) });
       return;
     }
     if (message.id === undefined || message.id === null) return;
@@ -88,7 +89,7 @@ export class StdioMcpClient {
   }
 
   #send(message) {
-    if (!this.child?.stdin || this.closed) throw new Error(`Godot MCP ${this.label} nao esta ativo.`);
+    if (!this.child?.stdin || this.closed) throw new Error(`${this.serverName}${this.label ? ` ${this.label}` : ""} is not active.`);
     this.child.stdin.write(`${JSON.stringify(message)}\n`);
   }
 
@@ -97,7 +98,7 @@ export class StdioMcpClient {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
-        reject(new Error(`Timeout MCP em ${method} para ${this.label}.`));
+        reject(new Error(`MCP timeout in ${method} for ${this.serverName}${this.label ? ` ${this.label}` : ""}.`));
       }, timeoutMs);
       this.pending.set(id, { resolve, reject, timer });
       this.#send({ jsonrpc: "2.0", id, method, params });
@@ -119,25 +120,19 @@ export class StdioMcpClient {
   async close() {
     const child = this.child;
     this.closed = true;
-    this.#failAll(new Error(`Godot MCP ${this.label} foi encerrado.`));
+    this.#failAll(new Error(`${this.serverName}${this.label ? ` ${this.label}` : ""} was closed.`));
 
     if (!child) {
       this.readline?.close();
       return;
     }
 
-    // Feche a entrada, mas preserve stdout/stderr ate o evento `close` do
-    // ChildProcess. Destruir os pipes enquanto o Windows ainda entrega o
-    // callback de encerramento pode disparar asserts nativos em versoes novas
-    // do Node durante testes e shutdown rapido.
     try { child.stdin?.end(); } catch {}
 
-    // O SessionManager normalmente ja executou taskkill /T. Aguarde primeiro
-    // o callback correspondente antes de enviar outro sinal pelo Node.
-    let closed = await waitForChildClose(child, 750);
+    let closed = await waitForChildClose(child, 1500);
     if (!closed) {
       try { child.kill("SIGTERM"); } catch {}
-      closed = await waitForChildClose(child, 1500);
+      closed = await waitForChildClose(child, 2000);
     }
     if (!closed) {
       try { child.kill("SIGKILL"); } catch {}
@@ -146,11 +141,9 @@ export class StdioMcpClient {
 
     this.readline?.close();
     if (!closed) {
-      throw new Error(`Godot MCP ${this.label} permaneceu ativo apos cleanup.`);
+      throw new Error(`${this.serverName}${this.label ? ` ${this.label}` : ""} remained active after cleanup.`);
     }
 
-    // Depois de `close`, estes destroys apenas liberam wrappers locais; nao
-    // interrompem callbacks de processo ainda pendentes.
     try { child.stdout?.destroy(); } catch {}
     try { child.stderr?.destroy(); } catch {}
   }

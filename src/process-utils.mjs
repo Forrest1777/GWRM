@@ -6,13 +6,11 @@ function sleep(milliseconds) {
 
 export async function waitForPidExit(pid, timeoutMs = 10000) {
   if (!Number.isInteger(pid) || pid <= 0) return true;
-
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (!isPidAlive(pid)) return true;
     await sleep(100);
   }
-
   return !isPidAlive(pid);
 }
 
@@ -24,7 +22,7 @@ export async function terminateProcessTree(pid, config, logger, expectedFragment
     if (expectedFragment) {
       const commandLine = await getWindowsCommandLine(pid, config).catch(() => "");
       if (commandLine && !commandLine.toLowerCase().includes(expectedFragment.toLowerCase())) {
-        const message = "PID nao corresponde ao processo esperado; encerramento recusado.";
+        const message = "PID does not match the expected process; termination refused.";
         await logger.warn(message, { pid, expected_fragment: expectedFragment });
         throw new Error(`${message} PID=${pid}.`);
       }
@@ -36,37 +34,28 @@ export async function terminateProcessTree(pid, config, logger, expectedFragment
       config.service.shutdownTimeoutSeconds * 1000,
     ).catch((error) => ({ code: null, signal: null, stdout: "", stderr: error.message }));
 
-    const exited = await waitForPidExit(
-      pid,
-      config.service.shutdownTimeoutSeconds * 1000,
-    );
-
+    const exited = await waitForPidExit(pid, config.service.shutdownTimeoutSeconds * 1000);
     if (!exited) {
-      const detail = result.stderr?.trim() || result.stdout?.trim() || `codigo=${result.code}`;
-      await logger.error("Processo permaneceu ativo apos taskkill.", { pid, detail });
-      throw new Error(`Nao foi possivel encerrar a arvore do processo ${pid}: ${detail}`);
+      const detail = result.stderr?.trim() || result.stdout?.trim() || `code=${result.code}`;
+      await logger.error("Process remained active after taskkill.", { pid, detail });
+      throw new Error(`Unable to terminate process tree ${pid}: ${detail}`);
     }
 
     if (result.code !== 0 && result.code !== null) {
-      await logger.warn("taskkill retornou codigo nao zero, mas o processo foi encerrado.", {
+      await logger.warn("taskkill returned a non-zero code, but the process exited.", {
         pid,
         code: result.code,
         stderr: result.stderr?.trim(),
       });
     }
-
     return true;
   }
 
   try { process.kill(pid, "SIGTERM"); } catch {}
   if (await waitForPidExit(pid, 500)) return true;
   try { process.kill(pid, "SIGKILL"); } catch {}
-
-  const exited = await waitForPidExit(
-    pid,
-    config.service.shutdownTimeoutSeconds * 1000,
-  );
-  if (!exited) throw new Error(`Nao foi possivel encerrar o processo ${pid}.`);
+  const exited = await waitForPidExit(pid, config.service.shutdownTimeoutSeconds * 1000);
+  if (!exited) throw new Error(`Unable to terminate process ${pid}.`);
   return true;
 }
 
@@ -94,13 +83,13 @@ export function runAndWait(command, args, timeoutMs, options = {}) {
     child.stderr?.on("data", (chunk) => { stderr += chunk.toString("utf8"); });
     const timer = setTimeout(() => {
       try { child.kill("SIGKILL"); } catch {}
-      reject(new Error(`Timeout executando ${command}.`));
+      reject(new Error(`Timed out executing ${command}.`));
     }, timeoutMs);
     child.once("error", (error) => { clearTimeout(timer); reject(error); });
     child.once("close", (code) => {
       clearTimeout(timer);
       if (code === 0) resolve(code);
-      else reject(new Error(`${command} encerrou com codigo ${code}: ${stderr.trim()}`));
+      else reject(new Error(`${command} exited with code ${code}: ${stderr.trim()}`));
     });
   });
 }
@@ -114,7 +103,7 @@ export function runAndCapture(command, args, timeoutMs, options = {}) {
     child.stderr?.on("data", (chunk) => { stderr += chunk.toString("utf8"); });
     const timer = setTimeout(() => {
       try { child.kill("SIGKILL"); } catch {}
-      reject(new Error(`Timeout executando ${command}.`));
+      reject(new Error(`Timed out executing ${command}.`));
     }, timeoutMs);
     child.once("error", (error) => { clearTimeout(timer); reject(error); });
     child.once("close", (code, signal) => {
@@ -123,7 +112,6 @@ export function runAndCapture(command, args, timeoutMs, options = {}) {
     });
   });
 }
-
 
 function escapePowerShellSingleQuoted(value) {
   return String(value).replaceAll("'", "''");
@@ -136,9 +124,8 @@ export function buildWindowsProcessPathProbeScript(pathFragment, processNames = 
     .map((name) => name.trim().toLowerCase());
   const namesJson = escapePowerShellSingleQuoted(JSON.stringify(normalizedNames));
 
-  // Mantenha o predicado inteiro em uma única instrução. A versão anterior
-  // juntava linhas com "; " e gerava tokens inválidos como "-and;" no
-  // Windows PowerShell 5.1.
+  // Keep the whole predicate in one PowerShell statement. Splitting it with
+  // semicolons can produce invalid tokens such as "-and;" on Windows PowerShell 5.1.
   const predicate = [
     `($_.ProcessId -ne $PID)`,
     `($null -ne $_.CommandLine)`,
@@ -156,16 +143,14 @@ export function buildWindowsProcessPathProbeScript(pathFragment, processNames = 
 
 export async function listWindowsProcessesReferencingPath(pathFragment, config, processNames = []) {
   if (process.platform !== "win32" || !pathFragment) return [];
-
   const script = buildWindowsProcessPathProbeScript(pathFragment, processNames);
-
   const result = await runAndCapture(
     config.paths.powershellExecutable,
     ["-NoProfile", "-NonInteractive", "-Command", script],
     15000,
   );
   if (result.code !== 0) {
-    throw new Error(`Falha ao consultar processos residuais: ${result.stderr.trim() || result.stdout.trim()}`);
+    throw new Error(`Failed to query residual processes: ${result.stderr.trim() || result.stdout.trim()}`);
   }
   const parsed = JSON.parse(result.stdout.trim() || "[]");
   const rows = Array.isArray(parsed) ? parsed : [parsed];
@@ -182,7 +167,7 @@ export async function terminateWindowsProcessesReferencingPath(pathFragment, con
   const terminated = [];
   for (const processInfo of found) {
     if (!isPidAlive(processInfo.pid)) continue;
-    await logger.warn("Processo residual associado a worktree sera encerrado.", {
+    await logger.warn("Residual process associated with the worktree will be terminated.", {
       pid: processInfo.pid,
       name: processInfo.name,
       path: pathFragment,

@@ -1,39 +1,34 @@
 ---
 name: godot-development
-description: Desenvolvimento e verificacao de worktrees Godot/GDScript usando GWRM, LSP e GUT.
+description: Develop and validate Godot/GDScript worktrees using GWRM, LSP, Godot MCP, GUT, and optional graphical Computer Use.
 ---
 
-# Godot/GDScript no Hermes com GWRM
+# Godot/GDScript with GWRM
 
-## Inicio e encerramento
+## Lifecycle
 
-1. Valide a worktree já provisionada pelo dispatcher com a skill `worktree-preflight`.
-2. Resolva `worktree_name` a partir do basename de `HERMES_KANBAN_WORKSPACE`.
-3. Chame `activate_worktree` e aguarde `status: ready` antes de trabalhar com GDScript.
-4. Use sempre a mesma `worktree_name` nas tools Godot e GUT.
-5. Chame `deactivate_worktree` antes de concluir ou devolver o card e confirme `stopped`, sem PIDs residuais.
+1. Validate the dispatcher-provisioned worktree with `worktree-preflight`.
+2. Resolve `worktree_name` from the basename of `HERMES_KANBAN_WORKSPACE`.
+3. Perform static analysis first. Activate GWRM only when runtime/LSP/GUT/Godot MCP/GUI access is needed.
+4. Use the same `worktree_name` for all Godot, GUT, and GUI tools.
+5. Stop a project if `run_project` was used.
+6. Deactivate the worktree before completing the task and confirm `status: stopped`, `residual_pids: []`, and `directory_released: true`.
 
-O worker nao inicia Godot, nao escolhe portas e nao converte caminhos manualmente.
+The worker does not choose ports, launch unmanaged Godot processes, or manually translate Windows/container paths.
 
-## Caminhos
+## Paths
 
-- Use `res://` para recursos do projeto.
-- Use `user://` para dados gravaveis.
-- Nao grave caminhos absolutos de Windows ou Linux no codigo, cenas ou recursos.
-- Caminhos absolutos pertencem apenas a configuracao externa do GWRM.
+- Use `res://` for project resources.
+- Use `user://` for writable runtime data.
+- Never commit host-specific absolute Windows/Linux paths into code, scenes, or resources.
+- Absolute host paths belong only in local GWRM configuration.
 
-## Validacao
+## Validation
 
-1. Edite os arquivos da worktree associada ao card.
-2. Leia e corrija os diagnosticos LSP retornados pelo Hermes.
-3. Use `godot_lsp_status` ou `get_worktree_status` quando houver falha de conexao.
-4. Execute GUT no mesmo `worktree_name`.
-5. Nao trate ausencia de diagnosticos como prova de correcao de runtime.
-6. Nao considere GUT aprovado sem scripts, testes e assertagens maiores que zero e sem falhas/erros.
+- LSP: syntax, types, symbols, references, semantic diagnostics.
+- Dedicated Godot MCP: scene/resource operations, graphical project execution, debug output.
+- GUT: behavior and integration validation.
+- Computer Use: real graphical interaction when a human-like UI gate is needed.
+- GWRM: lifecycle, imports, ports, process ownership, mapping, and cleanup.
 
-## Separacao
-
-- LSP: sintaxe, tipos, simbolos, referencias e diagnosticos semanticos.
-- Godot MCP dedicado: cenas, nos, recursos, execucao e logs da worktree.
-- GUT: comportamento e integracao no projeto da worktree.
-- GWRM: lifecycle, importacao, portas, processos, mapeamento e cleanup.
+Prefer semantic GUI inspection and element tokens. Request screenshots only when the accessibility tree is insufficient or visual evidence is explicitly required.

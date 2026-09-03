@@ -1,7 +1,11 @@
 node_modules/
+gwrm.config.json
 logs/*
 !logs/.gitkeep
 state/*
 !state/.gitkeep
-gwrm.config.json
-*.local.json
+*.bak
+*.tmp
+.gwrm-backup/
+__pycache__/
+*.pyc

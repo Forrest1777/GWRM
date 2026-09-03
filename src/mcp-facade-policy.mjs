@@ -6,6 +6,12 @@ const SAFE_RETRY_TOOLS = new Set([
   "get_godot_version",
   "list_projects",
   "get_project_info",
+  "gui_status",
+  "gui_list_windows",
+  "gui_wait_for_window",
+  "gui_inspect_window",
+  "gui_capture_window",
+  "gui_wait_for_element",
 ]);
 
 export function isSafeToRetrySupervisorTool(name) {
@@ -40,6 +46,10 @@ export function supervisorRequestTimeoutMs(config, name) {
     name === "update_project_uids"
   ) {
     return (config.godotMcp.requestTimeoutSeconds + bufferSeconds) * 1000;
+  }
+
+  if (name.startsWith("gui_")) {
+    return (config.computerUse.maxWaitTimeoutSeconds + config.computerUse.requestTimeoutSeconds + bufferSeconds) * 1000;
   }
 
   return 60_000;

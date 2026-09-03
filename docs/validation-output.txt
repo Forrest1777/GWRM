@@ -1,62 +1,9 @@
-Sintaxe JavaScript valida.
-TAP version 13
-# Subtest: MCP facade delegates to singleton supervisor
-ok 1 - MCP facade delegates to singleton supervisor
-  ---
-  duration_ms: 757.445027
-  type: 'test'
-  ...
-# Subtest: accept real successful GUT result
-ok 2 - accept real successful GUT result
-  ---
-  duration_ms: 1.531223
-  type: 'test'
-  ...
-# Subtest: reject exit code zero with no tests
-ok 3 - reject exit code zero with no tests
-  ---
-  duration_ms: 0.575684
-  type: 'test'
-  ...
-# Subtest: reject failing tests
-ok 4 - reject failing tests
-  ---
-  duration_ms: 0.163793
-  type: 'test'
-  ...
-# Subtest: resolve worktree paths
-ok 5 - resolve worktree paths
-  ---
-  duration_ms: 0.668252
-  type: 'test'
-  ...
-# Subtest: reject path traversal in worktree name
-ok 6 - reject path traversal in worktree name
-  ---
-  duration_ms: 0.238694
-  type: 'test'
-  ...
-# Subtest: validate res path
-ok 7 - validate res path
-  ---
-  duration_ms: 0.203072
-  type: 'test'
-  ...
-# [GWRM] 2026-07-25T19:22:32.817Z INFO Worktree pronta.
-# [GWRM] 2026-07-25T19:22:32.850Z INFO Execucao GUT concluida.
-# [GWRM] 2026-07-25T19:22:33.655Z INFO Servicos da worktree encerrados.
-# Subtest: activate, route MCP, run GUT and deactivate isolated worktree
-ok 8 - activate, route MCP, run GUT and deactivate isolated worktree
-  ---
-  duration_ms: 1183.387974
-  type: 'test'
-  ...
-1..8
-# tests 8
-# suites 0
-# pass 8
-# fail 0
-# cancelled 0
-# skipped 0
-# todo 0
-# duration_ms 1280.749236
+GWRM 1.1.0 source-package validation
+
+Static JavaScript syntax: PASS
+JSON configuration/template parsing: PASS
+Python integration-module compilation: PASS
+Bash worktree-preflight syntax: PASS
+Node test suite: 14 passed, 0 failed
+
+The package-generation environment cannot validate native Windows taskkill/CIM behavior or a real Cua Driver + graphical Godot desktop session. Those checks are documented in docs/VALIDATION.md.

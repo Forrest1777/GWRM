@@ -1,10 +1,10 @@
 param(
-    [string]$HermesData = "E:\dev\ai_agents\hermes\hermes-data",
+    [Parameter(Mandatory = $true)]
+    [string]$HermesData,
     [switch]$InstallOrchestratorPlugin
 )
 
 $ErrorActionPreference = "Stop"
-$Root = Split-Path -Parent $PSScriptRoot
 $PluginSource = Join-Path $PSScriptRoot "plugin\godot-lsp"
 $BridgeSource = Join-Path $PSScriptRoot "bin\godot-lsp-bridge"
 $BinDirectory = Join-Path $HermesData "bin"
@@ -19,8 +19,8 @@ foreach ($Profile in $Profiles) {
     if (Test-Path $Target) { Remove-Item -Recurse -Force $Target }
     New-Item -ItemType Directory -Force (Split-Path $Target) | Out-Null
     Copy-Item -Recurse -Force $PluginSource $Target
-    Write-Host "Plugin instalado em $Target"
+    Write-Host "Plugin installed at $Target"
 }
 
-Write-Host "Bridge instalado em $(Join-Path $BinDirectory 'godot-lsp-bridge')"
-Write-Host "Agora mescle os snippets YAML nos configs dos profiles e reinicie o Hermes."
+Write-Host "Bridge installed at $(Join-Path $BinDirectory 'godot-lsp-bridge')"
+Write-Host "Merge the YAML snippets into the relevant profile configs and restart Hermes."

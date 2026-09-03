@@ -1,36 +1,35 @@
-# Relatório de validação
+# Validation
 
-## Validações executadas
+## Static JavaScript validation
 
-- verificação de sintaxe de todos os arquivos `.mjs`;
-- compilação sintática do plugin Python e do bridge LSP;
-- testes de segurança de nomes de worktree e caminhos `res://`;
-- teste do parser de resultado GUT, incluindo falso positivo com exit code zero;
-- teste integrado com Godot simulado:
-  - criação do cache de `class_name`;
-  - porta LSP interna;
-  - relay LSP externo;
-  - Godot MCP dedicado;
-  - roteamento de `projectPath` para a worktree;
-  - execução GUT;
-  - desativação e cleanup;
-- teste do facade MCP delegando a um supervisor singleton.
-
-Resultado final no ambiente de construção:
-
-```text
-8 testes executados
-8 testes aprovados
-0 testes falhando
+```powershell
+npm run check
 ```
 
-## Limites da validação
+## Unit/integration tests
 
-Este ambiente não executa binários Windows nem o Godot 4.6 real. Portanto, ainda precisam ser validados no computador de destino:
+```powershell
+npm test
+```
 
-- inicialização real de `Godot_v4.6-stable_win64_console.exe` com `--headless --editor`;
-- handshake real com `@coding-solo/godot-mcp@0.1.1`;
-- acesso do container Docker ao relay LSP;
-- execução da suíte GUT real;
-- comportamento do encerramento por `CTRL+C` no console Windows;
-- regras do Firewall do Windows para as faixas configuradas.
+The repository tests use fake Godot, fake Godot MCP, and fake Cua MCP processes where possible so core lifecycle and routing can be tested without modifying a real project.
+
+## Windows host validation
+
+After configuring a real host, verify in this order:
+
+1. `start-gwrm.bat` reaches `GWRM READY`.
+2. Hermes can call `gwrm_status`.
+3. Activate a disposable worktree and confirm `status=ready`.
+4. Confirm LSP resolves to that worktree.
+5. Run a small GUT selection and collect its terminal operation result.
+6. Run a graphical Godot scene using `run_project`.
+7. Call `gui_wait_for_window` for that worktree.
+8. Call `gui_inspect_window` without a screenshot.
+9. Exercise one safe semantic action in background mode and re-inspect.
+10. Capture an image only if visual evidence is required.
+11. `stop_project`, then deactivate the worktree.
+12. Confirm no residual Godot process references that worktree path.
+13. Stop GWRM with `CTRL+C` and confirm its child services exit.
+
+Real graphical Cua/Godot behavior depends on the interactive Windows session and must be validated on the target host; the source package cannot certify that environment by unit tests alone.

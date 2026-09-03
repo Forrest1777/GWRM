@@ -5,7 +5,7 @@
     "mcp_port": 8123,
     "control_port": 8130,
     "bind_host": "0.0.0.0",
-    "api_key": "SUBSTITUA_POR_UMA_CHAVE_HEXADECIMAL_FORTE",
+    "api_key": "REPLACE_WITH_64_TO_128_HEX_CHARACTERS",
     "reconciliation_interval_seconds": 30,
     "max_active_worktrees": 4,
     "shutdown_timeout_seconds": 10
@@ -14,11 +14,11 @@
     "node_executable": "node",
     "npm_executable": "npm.cmd",
     "powershell_executable": "powershell.exe",
-    "godot_executable": "E:\\dev\\IDE\\win64-g43-s161-gs412-mp-d3d12\\Godot_v4.6-stable_win64_console.exe",
-    "windows_workspace_root": "E:\\dev\\ai_agents\\hermes\\workspace",
+    "godot_executable": "C:\\Tools\\Godot\\Godot_console.exe",
+    "windows_workspace_root": "C:\\workspaces",
     "container_workspace_root": "/workspace",
-    "windows_worktrees_root": "E:\\dev\\ai_agents\\hermes\\workspace\\skill_system_framework\\.worktrees",
-    "container_worktrees_root": "/workspace/skill_system_framework/.worktrees",
+    "windows_worktrees_root": "C:\\workspaces\\project\\.worktrees",
+    "container_worktrees_root": "/workspace/project/.worktrees",
     "state_directory": "./state",
     "logs_directory": "./logs"
   },
@@ -46,18 +46,32 @@
   },
   "godot_mcp": {
     "command": "@node",
-    "args": [
-      "./node_modules/@coding-solo/godot-mcp/build/index.js"
-    ],
+    "args": ["./node_modules/@coding-solo/godot-mcp/build/index.js"],
     "protocol_version": "2024-11-05",
     "startup_timeout_seconds": 60,
     "request_timeout_seconds": 300
   },
   "gut": {
-    "default_test_directory": "res://tests/skill_system/ai_system",
-    "allowed_test_root": "res://tests/skill_system/ai_system",
+    "default_test_directory": "res://tests",
+    "allowed_test_root": "res://tests",
     "timeout_seconds": 600,
     "max_output_characters": 30000,
     "max_concurrent_processes": 2
+  },
+  "computer_use": {
+    "enabled": true,
+    "required": false,
+    "command": "cua-driver",
+    "args": ["mcp"],
+    "protocol_version": "2024-11-05",
+    "startup_timeout_seconds": 20,
+    "request_timeout_seconds": 60,
+    "permission_mode": "standard",
+    "wait_timeout_seconds": 15,
+    "max_wait_timeout_seconds": 60,
+    "wait_poll_milliseconds": 500,
+    "max_semantic_elements": 400,
+    "max_semantic_depth": 16,
+    "max_image_dimension": 900
   }
 }

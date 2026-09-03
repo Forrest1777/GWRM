@@ -64,18 +64,21 @@ export class SessionManager {
         this.records.set(record.worktree_name, record);
         if (pathChanged) {
           await this.#persist(record);
-          await this.logger.info("Paths de state atualizados para a configuracao vigente.", {
+          await this.logger.info("Persisted state paths were updated to match the current configuration.", {
             worktree: record.worktree_name,
             host_project_path: record.host_project_path,
             container_project_path: record.container_project_path,
           });
         }
       } catch (error) {
-        await this.logger.warn("Registro de worktree invalido ignorado.", { file, error: error.message });
+        await this.logger.warn("Invalid worktree state record ignored.", { file, error: error.message });
       }
     }
     await this.reconcileAll("startup");
-    this.reconcileTimer = setInterval(() => this.reconcileAll("periodic").catch((error) => this.logger.error("Falha na reconciliacao periodica.", { error: error.message })), this.config.service.reconciliationIntervalSeconds * 1000);
+    this.reconcileTimer = setInterval(
+      () => this.reconcileAll("periodic").catch((error) => this.logger.error("Periodic reconciliation failed.", { error: error.message })),
+      this.config.service.reconciliationIntervalSeconds * 1000,
+    );
     this.reconcileTimer.unref();
   }
 
@@ -202,8 +205,8 @@ export class SessionManager {
 
     const session = await this.ensureWorktree(name, `tool:${toolName}`);
     const runtime = this.runtime.get(name);
-    if (!runtime?.mcp?.isAlive) throw new Error(`Godot MCP dedicado de ${name} nao esta pronto.`);
-    if (!runtime.mcp.hasTool(toolName)) throw new Error(`A versao instalada do Godot MCP nao oferece a tool '${toolName}'.`);
+    if (!runtime?.mcp?.isAlive) throw new Error(`Dedicated Godot MCP for ${name} is not ready.`);
+    if (!runtime.mcp.hasTool(toolName)) throw new Error(`The installed Godot MCP version does not provide tool '${toolName}'.`);
     const upstreamArgs = this.#mapGodotArguments(toolName, args, session.host_project_path);
     const result = await runtime.mcp.callTool(toolName, upstreamArgs);
     if (toolName === "run_project") runtime.projectStarted = true;
@@ -214,15 +217,9 @@ export class SessionManager {
     return await this.#withLock(name, async () => {
       const runtime = this.runtime.get(name);
       if (!runtime?.mcp?.isAlive || !runtime.projectStarted) {
-        return {
-          worktree_name: name,
-          status: "already_stopped",
-          project_started: false,
-        };
+        return { worktree_name: name, status: "already_stopped", project_started: false };
       }
-      if (!runtime.mcp.hasTool("stop_project")) {
-        throw new Error(`A versao instalada do Godot MCP nao oferece a tool 'stop_project'.`);
-      }
+      if (!runtime.mcp.hasTool("stop_project")) throw new Error("The installed Godot MCP version does not provide tool 'stop_project'.");
       const result = await runtime.mcp.callTool("stop_project", {});
       runtime.projectStarted = false;
       return result;
@@ -240,7 +237,7 @@ export class SessionManager {
           if (this.config.sessions.removeConfigurationWhenWorktreeMissing) {
             this.records.delete(name);
             await rm(this.#recordPath(name), { force: true });
-            await this.logger.info("Registro removido porque a worktree nao existe mais.", { worktree: name });
+            await this.logger.info("State record removed because the worktree no longer exists.", { worktree: name });
           }
           return;
         }
@@ -302,7 +299,7 @@ export class SessionManager {
     const activeCount = [...this.runtime.keys()].filter((name) => name !== record.worktree_name).length;
     if (activeCount >= this.config.service.maxActiveWorktrees) {
       record.status = "waiting_capacity";
-      record.last_error = `Limite de ${this.config.service.maxActiveWorktrees} worktrees ativas atingido.`;
+      record.last_error = `Maximum of ${this.config.service.maxActiveWorktrees} active worktrees reached.`;
       await this.#persist(record);
       return;
     }
@@ -345,8 +342,8 @@ export class SessionManager {
       ...this.config.godot.additionalEditorArgs,
     ];
     const godot = spawn(this.config.paths.godotExecutable, args, {
-      // Nunca use a worktree como cwd: no Windows isso mantem o diretorio bloqueado.
-      // O argumento --path ja seleciona explicitamente o projeto Godot.
+      // Never use the worktree as cwd. On Windows that can keep the directory locked.
+      // --path already selects the Godot project explicitly.
       cwd: this.config.appRoot,
       env: process.env,
       windowsHide: true,
@@ -359,10 +356,7 @@ export class SessionManager {
     this.runtime.set(record.worktree_name, { godot, stdout, stderr, mcp: null, relay: null, projectStarted: false });
     godot.once("close", (code, signal) => {
       this.#onGodotExit(record.worktree_name, code, signal).catch((error) => {
-        this.logger.error("Falha tratando encerramento do Godot.", {
-          worktree: record.worktree_name,
-          error: error.message,
-        });
+        this.logger.error("Failed to handle Godot process exit.", { worktree: record.worktree_name, error: error.message });
       });
     });
 
@@ -370,9 +364,12 @@ export class SessionManager {
       await waitForPort(this.config.godot.localReadyHost, record.godot_lsp_port, this.config.sessions.readyTimeoutSeconds * 1000, godot);
       if (this.config.godot.lspRelayEnabled) {
         const relay = await startTcpRelay({
-          bindHost: this.config.service.bindHost, bindPort: record.lsp_port,
-          targetHost: this.config.godot.localReadyHost, targetPort: record.godot_lsp_port,
-          logger: this.logger, worktree: record.worktree_name,
+          bindHost: this.config.service.bindHost,
+          bindPort: record.lsp_port,
+          targetHost: this.config.godot.localReadyHost,
+          targetPort: record.godot_lsp_port,
+          logger: this.logger,
+          worktree: record.worktree_name,
         });
         this.runtime.get(record.worktree_name).relay = relay;
       }
@@ -388,6 +385,7 @@ export class SessionManager {
         requestTimeoutMs: this.config.godotMcp.requestTimeoutSeconds * 1000,
         logger: this.logger,
         label: record.worktree_name,
+        serverName: "Dedicated Godot MCP",
       });
       await mcp.start();
       this.runtime.get(record.worktree_name).mcp = mcp;
@@ -396,7 +394,14 @@ export class SessionManager {
       record.ready_at = now();
       record.updated_at = now();
       await this.#persist(record);
-      await this.logger.info("Worktree pronta.", { worktree: record.worktree_name, lsp_port: record.lsp_port, godot_lsp_port: record.godot_lsp_port, dap_port: record.dap_port, godot_pid: record.godot_pid, godot_mcp_pid: record.godot_mcp_pid });
+      await this.logger.info("Worktree ready.", {
+        worktree: record.worktree_name,
+        lsp_port: record.lsp_port,
+        godot_lsp_port: record.godot_lsp_port,
+        dap_port: record.dap_port,
+        godot_pid: record.godot_pid,
+        godot_mcp_pid: record.godot_mcp_pid,
+      });
     } catch (error) {
       record.last_error = error.message;
       await this.#stopRuntime(record, "startup_failed");
@@ -411,19 +416,15 @@ export class SessionManager {
     const record = this.records.get(name);
     if (!record) return;
     const runtime = this.runtime.get(name);
-    // Durante shutdown, #stopRuntime e o unico dono do fechamento de streams.
-    // Isso evita dois callbacks encerrando os mesmos pipes simultaneamente no
-    // Windows enquanto o ChildProcess ainda entrega o evento `close`.
+    // During shutdown #stopRuntime is the sole owner of stream closure. This avoids
+    // two callbacks closing the same Windows pipes while ChildProcess emits `close`.
     if (record.status === "stopping" || !record.desired_active) return;
-    await Promise.allSettled([
-      closeWriteStream(runtime?.stdout),
-      closeWriteStream(runtime?.stderr),
-    ]);
+    await Promise.allSettled([closeWriteStream(runtime?.stdout), closeWriteStream(runtime?.stderr)]);
     record.status = "failed";
-    record.last_error = `Godot encerrou: codigo=${code}, sinal=${signal}`;
+    record.last_error = `Godot exited: code=${code}, signal=${signal}`;
     record.godot_pid = null;
     await this.#persist(record);
-    await this.logger.warn("Godot headless encerrou inesperadamente.", { worktree: name, code, signal });
+    await this.logger.warn("Headless Godot exited unexpectedly.", { worktree: name, code, signal });
   }
 
   async #stopRuntime(record, reason) {
@@ -433,55 +434,40 @@ export class SessionManager {
     record.directory_released = false;
     await this.#persist(record);
 
-    // Capture os PIDs antes de fechar o cliente MCP. Se o processo pai encerrar
-    // primeiro, taskkill /T pode perder descendentes iniciados pelo Godot MCP.
+    // Capture PIDs before closing the MCP client. If the parent exits first,
+    // taskkill /T can lose descendants launched by the Godot MCP process.
     const mcpPid = runtime?.mcp?.pid || record.godot_mcp_pid;
     const godotPid = runtime?.godot?.pid || record.godot_pid;
     const godotProcessName = path.basename(this.config.paths.godotExecutable);
 
     try {
-      if (runtime?.relay) {
-        await runtime.relay.close();
-      }
+      if (runtime?.relay) await runtime.relay.close();
 
       if (runtime?.projectStarted && runtime?.mcp?.isAlive && runtime.mcp.hasTool("stop_project")) {
         await Promise.race([
           runtime.mcp.callTool("stop_project", {}),
-          new Promise((_, reject) => setTimeout(
-            () => reject(new Error("Timeout aguardando stop_project.")),
-            2000,
-          )),
+          new Promise((_, reject) => setTimeout(() => reject(new Error("Timed out waiting for stop_project.")), 2000)),
         ]).then(() => {
           runtime.projectStarted = false;
         }).catch(async (error) => {
-          await this.logger.warn("stop_project nao concluiu; aplicando encerramento forcado.", {
+          await this.logger.warn("stop_project did not complete; forced termination will be used.", {
             worktree: record.worktree_name,
             error: error.message,
           });
         });
       }
 
-      if (mcpPid && isPidAlive(mcpPid)) {
-        await terminateProcessTree(mcpPid, this.config, this.logger, "godot-mcp");
-      }
+      if (mcpPid && isPidAlive(mcpPid)) await terminateProcessTree(mcpPid, this.config, this.logger, "godot-mcp");
       if (runtime?.mcp) await runtime.mcp.close();
 
-      if (godotPid && isPidAlive(godotPid)) {
-        await terminateProcessTree(godotPid, this.config, this.logger, record.host_project_path);
-      }
+      if (godotPid && isPidAlive(godotPid)) await terminateProcessTree(godotPid, this.config, this.logger, record.host_project_path);
       if (runtime?.godot) {
-        const godotClosed = await waitForChildProcessClose(
-          runtime.godot,
-          this.config.service.shutdownTimeoutSeconds * 1000,
-        );
-        if (!godotClosed) {
-          throw new Error(`Callback de encerramento do Godot nao concluiu para PID ${godotPid}.`);
-        }
+        const godotClosed = await waitForChildProcessClose(runtime.godot, this.config.service.shutdownTimeoutSeconds * 1000);
+        if (!godotClosed) throw new Error(`Godot close callback did not complete for PID ${godotPid}.`);
       }
 
-      // Fallback direcionado: encerra somente processos Godot cuja linha de
-      // comando ainda referencia o path desta worktree. Isso cobre editores ou
-      // jogos descendentes que tenham escapado da arvore original no Windows.
+      // Targeted fallback: terminate only Godot processes whose command line still
+      // references this worktree path. This covers detached editors/game windows.
       const residualCleanup = await terminateWindowsProcessesReferencingPath(
         record.host_project_path,
         this.config,
@@ -493,14 +479,8 @@ export class SessionManager {
       await closeWriteStream(runtime?.stderr);
       this.runtime.delete(record.worktree_name);
 
-      const residual = await listWindowsProcessesReferencingPath(
-        record.host_project_path,
-        this.config,
-        [godotProcessName],
-      );
-      if (residual.length > 0) {
-        throw new Error(`Processos residuais ainda referenciam a worktree: ${residual.map((item) => item.pid).join(", ")}`);
-      }
+      const residual = await listWindowsProcessesReferencingPath(record.host_project_path, this.config, [godotProcessName]);
+      if (residual.length > 0) throw new Error(`Residual processes still reference the worktree: ${residual.map((item) => item.pid).join(", ")}`);
 
       record.godot_pid = null;
       record.godot_mcp_pid = null;
@@ -509,23 +489,19 @@ export class SessionManager {
       record.status = "stopped";
       record.updated_at = now();
       await this.#persist(record);
-      await this.logger.info("Servicos da worktree encerrados e handles GWRM liberados.", {
+      await this.logger.info("Worktree services stopped and GWRM handles released.", {
         worktree: record.worktree_name,
         reason,
         terminated_residual_pids: residualCleanup.terminated,
       });
     } catch (error) {
-      const residual = await listWindowsProcessesReferencingPath(
-        record.host_project_path,
-        this.config,
-        [godotProcessName],
-      ).catch(() => []);
+      const residual = await listWindowsProcessesReferencingPath(record.host_project_path, this.config, [godotProcessName]).catch(() => []);
       record.residual_pids = residual.map((item) => item.pid);
       record.directory_released = false;
       record.status = "failed";
-      record.last_error = `Falha ao liberar processos da worktree: ${error.message}`;
+      record.last_error = `Failed to release worktree processes: ${error.message}`;
       await this.#persist(record);
-      await this.logger.error("Falha ao liberar a worktree.", {
+      await this.logger.error("Failed to release worktree.", {
         worktree: record.worktree_name,
         reason,
         residual_pids: record.residual_pids,
@@ -544,11 +520,11 @@ export class SessionManager {
     const cache = path.join(hostPath, ".godot", "global_script_class_cache.cfg");
     const deadline = Date.now() + this.config.sessions.readyTimeoutSeconds * 1000;
     while (Date.now() < deadline) {
-      if (child.exitCode !== null) throw new Error("Godot encerrou antes de gerar o cache de class_name.");
+      if (child.exitCode !== null) throw new Error("Godot exited before generating the class_name cache.");
       if (await stat(cache).then((item) => item.isFile()).catch(() => false)) return;
       await new Promise((resolve) => setTimeout(resolve, 500));
     }
-    throw new Error("Timeout aguardando global_script_class_cache.cfg.");
+    throw new Error("Timed out waiting for global_script_class_cache.cfg.");
   }
 
   #mapGodotArguments(toolName, args, hostPath) {
@@ -569,6 +545,7 @@ export class SessionManager {
   }
 
   #recordPath(name) { return path.join(this.config.paths.stateDirectory, `${name}.json`); }
+
   async #persist(record) {
     record.updated_at = now();
     await writeFile(this.#recordPath(record.worktree_name), `${JSON.stringify(record, null, 2)}\n`, "utf8");

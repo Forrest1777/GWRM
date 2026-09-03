@@ -19,7 +19,7 @@ export async function startTcpRelay({ bindHost, bindPort, targetHost, targetPort
     incoming.on("error", close);
     outgoing.on("error", close);
   });
-  server.on("error", (error) => logger.error("Erro no relay LSP.", { worktree, error: error.message }));
+  server.on("error", (error) => logger.error("LSP relay error.", { worktree, error: error.message }));
   await new Promise((resolve, reject) => {
     server.once("error", reject);
     server.listen({ host: bindHost, port: bindPort, exclusive: true }, () => {

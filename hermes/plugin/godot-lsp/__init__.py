@@ -1,4 +1,4 @@
-"""Plugin Hermes para GDScript LSP dinamico por worktree via GWRM."""
+"""Hermes plugin for dynamic per-worktree GDScript LSP through GWRM."""
 from __future__ import annotations
 
 import json
@@ -51,7 +51,7 @@ def _build_spawn(root: str, ctx: Any) -> Any:
     from agent.lsp.servers import SpawnSpec
     command = _bridge_command(ctx)
     if command is None:
-        LOGGER.warning("godot-lsp-bridge nao encontrado.")
+        LOGGER.warning("godot-lsp-bridge was not found.")
         return None
     env = dict(ctx.env_overrides.get(SERVER_ID, {}))
     env["GWRM_PROJECT_ROOT"] = root
@@ -96,7 +96,7 @@ def _derive_worktree(project_path: str, container_root: str) -> str | None:
 def _gwrm_status(project_path: str | None = None) -> dict[str, Any]:
     env = _server_env()
     project = str(Path(project_path or os.getcwd()).resolve())
-    worktrees_root = _setting(env, "GWRM_CONTAINER_WORKTREES_ROOT", "/workspace/skill_system_framework/.worktrees")
+    worktrees_root = _setting(env, "GWRM_CONTAINER_WORKTREES_ROOT", "/workspace/project/.worktrees")
     worktree = _setting(env, "GWRM_WORKTREE_NAME") or _derive_worktree(project, worktrees_root)
     control_url = _setting(env, "GWRM_CONTROL_URL", "http://host.docker.internal:8130").rstrip("/")
     api_key = _setting(env, "GWRM_API_KEY")
@@ -107,7 +107,7 @@ def _gwrm_status(project_path: str | None = None) -> dict[str, Any]:
         "configured": bool(worktree and api_key),
     }
     if not worktree or not api_key:
-        payload["error"] = "Nao foi possivel resolver worktree_name ou GWRM_API_KEY."
+        payload["error"] = "Could not resolve worktree_name or GWRM_API_KEY."
         return payload
     try:
         req = Request(
@@ -139,14 +139,14 @@ def register(ctx: Any) -> None:
             resolve_root=_find_godot_root,
             build_spawn=_build_spawn,
             seed_first_push=True,
-            description="GDScript - Godot LSP isolado por worktree via GWRM",
+            description="GDScript - per-worktree Godot LSP through GWRM",
         ))
     ctx.register_tool(
         name="godot_lsp_status",
         toolset="godot_lsp",
         schema={
             "name": "godot_lsp_status",
-            "description": "Consulta o GWRM e mostra a sessao LSP da worktree atual.",
+            "description": "Queries GWRM and reports the LSP session for the current worktree.",
             "parameters": {
                 "type": "object",
                 "properties": {"project_path": {"type": "string"}},
@@ -157,11 +157,11 @@ def register(ctx: Any) -> None:
     ctx.register_command(
         name="godot-lsp-status",
         handler=lambda raw: json.dumps(_gwrm_status(raw.strip() or None), ensure_ascii=False, indent=2),
-        description="Mostra a sessao LSP dinamica da worktree via GWRM.",
+        description="Shows the dynamic GDScript LSP session through GWRM.",
         args_hint="[project_path]",
     )
     ctx.register_skill(
         name="godot-development",
         path=PLUGIN_DIR / "skills" / "godot-development" / "SKILL.md",
-        description="Praticas de GDScript, GWRM, LSP e GUT.",
+        description="GDScript, GWRM, LSP, GUT, and graphical validation practices.",
     )
