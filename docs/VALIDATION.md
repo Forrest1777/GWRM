@@ -1,36 +1,101 @@
-# Relatório de validação
+# Validation
 
-## Validações executadas
+## Static validation
 
-- verificação de sintaxe de todos os arquivos `.mjs`;
-- compilação sintática do plugin Python e do bridge LSP;
-- testes de segurança de nomes de worktree e caminhos `res://`;
-- teste do parser de resultado GUT, incluindo falso positivo com exit code zero;
-- teste integrado com Godot simulado:
-  - criação do cache de `class_name`;
-  - porta LSP interna;
-  - relay LSP externo;
-  - Godot MCP dedicado;
-  - roteamento de `projectPath` para a worktree;
-  - execução GUT;
-  - desativação e cleanup;
-- teste do facade MCP delegando a um supervisor singleton.
+Run:
 
-Resultado final no ambiente de construção:
-
-```text
-8 testes executados
-8 testes aprovados
-0 testes falhando
+```powershell
+npm run check
+npm test
 ```
 
-## Limites da validação
+The source package validates JavaScript syntax, JSON templates, Python integration modules, the Bash worktree preflight, worktree isolation, Godot/GUT routing, MCP facade policy, Computer Use routing, Cua lifecycle recovery, and startup timeout policy.
 
-Este ambiente não executa binários Windows nem o Godot 4.6 real. Portanto, ainda precisam ser validados no computador de destino:
+Latest package validation result:
 
-- inicialização real de `Godot_v4.6-stable_win64_console.exe` com `--headless --editor`;
-- handshake real com `@coding-solo/godot-mcp@0.1.1`;
-- acesso do container Docker ao relay LSP;
-- execução da suíte GUT real;
-- comportamento do encerramento por `CTRL+C` no console Windows;
-- regras do Firewall do Windows para as faixas configuradas.
+```text
+Node tests: 19 passed, 0 failed
+JavaScript syntax: PASS
+JSON templates: PASS
+Python integration modules: PASS
+Bash worktree preflight: PASS
+```
+
+## Cua lifecycle regression coverage
+
+The Computer Use test suite now verifies that:
+
+- `start_session` and `end_session` are required Cua tools;
+- GWRM resets the implicit Cua lifecycle during Computer Use startup;
+- an expired Cua session is revived before GUI reads;
+- an expired Cua session is revived before mutating actions;
+- mutating actions such as `click` are not automatically retried;
+- GWRM requests `end_session` during shutdown before closing the MCP transport.
+
+This covers the Windows failure observed when Cua returned:
+
+```text
+this session has ended; call start_session explicitly to reuse its label
+```
+
+## Startup reconciliation regression coverage
+
+Launcher readiness no longer uses a fixed 30-second supervisor budget.
+
+The startup timeout policy now:
+
+- has a 60-second minimum;
+- grows according to the number of persisted worktree state files and the configured shutdown budget;
+- is capped at 10 minutes so a genuinely stuck supervisor still fails finitely.
+
+This allows startup reconciliation to close stale worktree runtimes without causing a false launcher timeout.
+
+## Real Windows host smoke validation — 2026-09-03
+
+A real end-to-end smoke was completed on an interactive Windows desktop using a disposable Hermes worktree and the existing Godot scene:
+
+`res://addons/gut/gui/ShortcutButton.tscn`
+
+Validated path:
+
+```text
+Hermes worker
+  -> GWRM MCP facade
+  -> isolated worktree activation
+  -> graphical Godot run_project
+  -> GWRM Computer Use service
+  -> Windows Cua Driver
+  -> authorized Godot window discovery
+  -> visual fallback capture
+  -> background click on Set
+  -> visible transition to Save / Cancel
+  -> stop_project
+  -> worktree deactivation and cleanup
+```
+
+Observed result:
+
+- worktree preflight passed;
+- GWRM activation reached `ready`;
+- graphical Godot window opened on Windows;
+- authorized window discovery succeeded;
+- semantic-first inspection was attempted;
+- visual fallback was used when the Godot controls were not sufficiently exposed semantically;
+- the `Set` button was clicked through GWRM/Cua in background delivery mode;
+- the post-click `Save` / `Cancel` state was visually verified;
+- `stop_project` passed;
+- deactivation completed with zero residual PIDs and the directory released;
+- Git remained clean;
+- no code change, commit, or push occurred inside the smoke worktree.
+
+No Cua lifecycle error reappeared after the lifecycle fix.
+
+## Remaining environment-specific validation
+
+The packaging environment itself does not execute the native Windows stack. Revalidate on the target host after upgrading whenever any of these dependencies change materially:
+
+- Windows version / desktop session model;
+- Godot version;
+- Cua Driver version;
+- Docker Desktop networking;
+- Hermes MCP behavior.
