@@ -57,6 +57,8 @@ function publicWindow(window) {
 }
 
 const REQUIRED_CUA_TOOLS = [
+  "start_session",
+  "end_session",
   "list_windows",
   "get_window_state",
   "click",
@@ -115,6 +117,24 @@ export class ComputerUseService {
       for (const tool of REQUIRED_CUA_TOOLS) {
         if (!client.hasTool(tool)) throw new Error(`Cua Driver nao oferece a tool obrigatoria '${tool}'.`);
       }
+
+      // Start every GWRM Computer Use lifecycle from a deterministic Cua session state.
+      const endSessionResult = await client.callTool("end_session", {});
+      if (endSessionResult?.isError) {
+        throw new Error(
+          this.#textFallback(endSessionResult) ||
+          "Cua Driver rejected end_session during initialization."
+        );
+      }
+
+      const startSessionResult = await client.callTool("start_session", {});
+      if (startSessionResult?.isError) {
+        throw new Error(
+          this.#textFallback(startSessionResult) ||
+          "Cua Driver rejected start_session during initialization."
+        );
+      }
+
       const discovery = await this.#call("list_windows", { on_screen_only: false });
       const discoveryPayload = extractStructured(discovery);
       this.desktopReady = discoveryPayload !== null;
@@ -159,9 +179,28 @@ export class ComputerUseService {
   async shutdown() {
     const client = this.client;
     this.client = null;
+
+    if (client?.isAlive) {
+      try {
+        const result = await client.callTool("end_session", {});
+        if (result?.isError) {
+          await this.logger.warn("Cua Driver rejeitou end_session durante shutdown.", {
+            component: "computer_use",
+            error: this.#textFallback(result) || "Cua Driver rejected end_session during shutdown.",
+          });
+        }
+      } catch (error) {
+        await this.logger.warn("Falha encerrando sessao Cua durante shutdown.", {
+          component: "computer_use",
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
     if (client) await client.close().catch(async (error) => {
       await this.logger.warn("Falha encerrando Cua Driver.", { component: "computer_use", error: error.message });
     });
+
     this.state = this.config.computerUse.enabled ? "stopped" : "disabled";
     this.desktopReady = false;
   }
