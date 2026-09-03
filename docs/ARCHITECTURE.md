@@ -1,114 +1,65 @@
-# GWRM Architecture
-
-GWRM (Godot Worktree Runtime Manager) is a Windows-hosted gateway that gives a containerized Hermes agent one stable integration boundary for Godot runtime services.
-
-## Runtime topology
+# Arquitetura do GWRM
 
 ```text
-Hermes / Docker
-  |-- MCP ------------------------> host.docker.internal:8123/mcp
-  |                                  |
-  |                                  v
-  |                              mcp-proxy
-  |                                  |
-  |                                  v
-  |                              GWRM MCP facade
-  |
-  `-- dynamic GDScript LSP ------> GWRM Control API :8130
-                                     |
-                                     v
-Windows host                      GWRM supervisor
-  |
-  |-- SessionManager
-  |    `-- per active worktree
-  |         |-- persistent Godot --headless --editor
-  |         |    |-- internal LSP port
-  |         |    |-- external LSP relay
-  |         |    `-- dedicated DAP port
-  |         `-- dedicated @coding-solo/godot-mcp stdio process
-  |
-  |-- GutRunner
-  |    `-- short-lived Godot --headless test processes
-  |
-  `-- ComputerUseService
-       `-- cua-driver mcp (owned child process)
-            `-- interactive Windows desktop
-                 `-- graphical Godot windows launched by run_project/launch_editor
+Hermes no Docker
+  ├─ MCP estavel: host.docker.internal:8123/mcp
+  └─ plugin LSP dinamico
+       └─ API de controle: host.docker.internal:8130
+
+GWRM no Windows
+  ├─ registro persistente por worktree
+  ├─ reconciliador de estado desejado/real
+  ├─ supervisor singleton independente das sessoes HTTP MCP
+  ├─ facade MCP leve criado pelo mcp-proxy
+  ├─ uma instancia Godot headless persistente por worktree ativa
+  │    ├─ --headless --editor --path <WORKTREE>
+  │    ├─ porta LSP interna exclusiva e relay TCP externo exclusivo
+  │    ├─ porta DAP exclusiva para evitar conflito
+  │    └─ cache .godot e class_name da propria worktree
+  ├─ um Godot MCP stdio dedicado por worktree ativa
+  ├─ processos GUT pontuais no projeto da worktree
+  ├─ ComputerUseService singleton
+  │    └─ cua-driver mcp (stdio, lifecycle pertencente ao GWRM)
+  └─ cleanup quando active=false, a worktree desaparece ou o GWRM encerra
 ```
 
-## One user-facing lifecycle
+## Estado desejado
 
-The launcher owns the supervisor and MCP proxy. The supervisor owns worktree runtime services and the Cua Driver MCP transport. A user starts the stack once with `start-gwrm.bat` and stops it with `CTRL+C`.
+O worker altera somente `desired_active` pelas tools `activate_worktree` e `deactivate_worktree`. O GWRM executa imediatamente a reconciliacao. A rotina periodica corrige crashes, processos ausentes e worktrees removidas.
 
-Computer Use is not a second service the user must manage. On Windows, GWRM starts `cua-driver mcp` as a child process. Closing its stdio transport during GWRM shutdown releases the Cua runtime.
+## Persistencia
 
-## Worktree isolation
+Cada worktree possui `state/<worktree_name>.json`. Worktrees ativas sao restauradas quando o GWRM inicia. Quando o diretorio da worktree deixa de existir, seus processos e seu registro sao removidos.
 
-Every runtime call identifies a `worktree_name`. GWRM maps it to configured Windows/container roots and refuses paths that escape those roots.
+## Isolamento
 
-An active worktree owns:
+Cada Godot MCP e um subprocesso stdio independente, portanto seu `activeProcess` pertence somente a uma worktree. `run_project`, `get_debug_output` e `stop_project` nao compartilham estado entre agentes.
 
-- a persistent headless Godot editor for import/cache/LSP/DAP;
-- a dedicated Godot MCP process;
-- dynamically allocated LSP/DAP ports;
-- isolated `run_project` state.
+## Integridade e cleanup
 
-`run_project`, `get_debug_output`, and `stop_project` are routed through that worktree's dedicated Godot MCP process.
+O dispatcher do Hermes materializa a worktree. O worker deve executar `worktree-preflight` antes de ativar o GWRM. Na desativacao, o GWRM encerra relay, projeto, arvore do Godot MCP e Godot headless, procura processos Godot residuais que ainda referenciem o path, aguarda streams e so entao publica `status: stopped`, `residual_pids: []` e `directory_released: true`. Registros persistentes tem seus paths atualizados quando a raiz configurada muda.
 
-## Godot MCP responsibilities
+No shutdown global, o supervisor tambem encerra o `ComputerUseService`; o `cua-driver mcp` pertence ao lifecycle do mesmo GWRM iniciado por `start-gwrm.bat`.
 
-GWRM does not reimplement Godot MCP scene operations. The pinned `@coding-solo/godot-mcp` package remains responsible for:
+## GUT supervisionado
 
-- launching the visual editor;
-- running a project/scene graphically;
-- collecting debug output;
-- stopping that graphical project process;
-- scene/resource operations such as create scene, add node, load sprite, save scene, export MeshLibrary, and UID maintenance.
+`run_gut_tests` e `run_gut_test_script` nao mantem uma chamada MCP aberta durante toda a execucao. O supervisor registra uma operacao em memoria, inicia o processo GUT sob o semaforo configurado e retorna `operation_id` imediatamente. O cliente consulta `get_gut_run_status` ate `terminal: true`. Chamadas identicas enquanto uma operacao estiver `queued` ou `running` reutilizam o mesmo `operation_id`, evitando execucoes duplicadas apos retry ou timeout de transporte.
 
-The scene/resource mutation operations are performed by the upstream MCP using short-lived `Godot --headless --script` executions. The visual editor and `run_project` remain graphical.
+## Idempotencia de lifecycle
 
-## GUT supervision
+`activate_worktree` reutiliza o runtime saudavel existente; `deactivate_worktree` retorna imediatamente quando a worktree ja esta totalmente parada; `get_worktree_status` representa worktrees desconhecidas como `not_registered` em vez de erro; e `stop_project` nao ativa uma worktree para para-la e nao encaminha `stop_project` ao Godot MCP quando nenhum `run_project` foi iniciado pelo runtime dedicado.
 
-GUT calls are asynchronous at the GWRM MCP layer. `run_gut_tests` and `run_gut_test_script` create an in-memory operation and return an `operation_id`. `get_gut_run_status` reads that operation until `terminal=true`.
+## Computer Use
 
-Identical queued/running test selections reuse the same operation ID to avoid duplicate test processes after client transport retries.
+O GWRM nao abre uma segunda instancia grafica para testes. `run_project` e `launch_editor` continuam pertencendo ao Godot MCP dedicado da worktree. O ComputerUseService apenas descobre e interage com as janelas resultantes.
 
-## Computer Use boundary
+O acesso GUI e worktree-bound. Para cada chamada, o GWRM localiza processos cuja command line referencia o path Windows da worktree, aceita apenas processos Godot graficos, exclui o Godot persistente `--headless` e cruza os PIDs autorizados com as janelas reportadas pelo Cua Driver. Um `window_id` fora desse conjunto e recusado.
 
-Computer Use is generic; it has no scene-specific knowledge.
+A politica de percepcao e semantic-first:
 
-GWRM does not know what a button such as "Start", "Add Actor", or "Save" means. It only exposes general primitives for:
+- `gui_inspect_window`: arvore de acessibilidade, screenshot desabilitado por padrao;
+- `gui_wait_for_window` e `gui_wait_for_element`: espera interna no GWRM, sem polling do agente;
+- `gui_capture_window`: imagem apenas sob demanda;
+- acoes: `delivery_mode=background` por padrao; `foreground` e escalacao explicita.
 
-- discovering authorized graphical Godot windows;
-- semantic accessibility inspection;
-- bounded internal waits;
-- click, text, key, hotkey, and scroll actions;
-- screenshot capture on explicit request.
-
-Before exposing a window, GWRM resolves processes whose command line references the requested worktree. It keeps only Godot processes, excludes the persistent headless Godot process, and rejects a `window_id` that does not belong to the authorized process set.
-
-## Observation policy
-
-Computer Use is semantic-first:
-
-1. discover windows;
-2. inspect the accessibility tree without a screenshot;
-3. address controls using `element_token` when possible;
-4. use window-local pixel coordinates for custom-rendered surfaces;
-5. capture a screenshot only when semantic state is insufficient.
-
-Input uses background delivery by default. Foreground delivery is an explicit per-action escalation.
-
-## Persistent state
-
-Each registered worktree has a JSON record under the configured state directory. Desired-active worktrees are reconciled after GWRM restarts. Missing worktrees can be removed automatically according to configuration.
-
-## Logging
-
-The structured JSONL log keeps event fields, including worktree information. Console output includes the worktree column when available:
-
-```text
-[GWRM] 14:27:10 | t_example | INFO | Worktree ready.
-```
-
-Events without worktree context use `-`.
+Nao existe logica especifica de cena no GWRM. AI ARENA ou qualquer outra cena e descrita pelo card/teste/agente usando as mesmas primitivas genericas.

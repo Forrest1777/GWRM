@@ -57,12 +57,12 @@ function startSupervisor() {
 
   const child = spawnChild(process.execPath, [path.join(APP_ROOT, "src", "supervisor.mjs"), "--config", configPath]);
   supervisor = child;
-  child.once("error", (error) => console.error(`Failed to start supervisor: ${error.message}`));
+  child.once("error", (error) => console.error(`Falha ao iniciar supervisor: ${error.message}`));
   child.once("close", (code, signal) => {
     if (supervisor === child) supervisor = null;
     if (shuttingDown) return;
-    const reason = signal ? `signal ${signal}` : `code ${code ?? "unknown"}`;
-    console.error(`GWRM supervisor exited with ${reason}. Restarting in 2 seconds...`);
+    const reason = signal ? `sinal ${signal}` : `codigo ${code ?? "desconhecido"}`;
+    console.error(`Supervisor GWRM encerrou com ${reason}. Reiniciando em 2 segundos...`);
     scheduleSupervisorRestart();
   });
 }
@@ -76,17 +76,17 @@ async function waitForHealth(timeoutMilliseconds = 30000) {
     } catch {}
     await sleep(300);
   }
-  throw new Error("Timed out waiting for the GWRM supervisor.");
+  throw new Error("Timeout aguardando o supervisor GWRM.");
 }
 
 async function waitForProxy(timeoutMilliseconds = 15000) {
   const deadline = Date.now() + timeoutMilliseconds;
   while (Date.now() < deadline) {
     if (await canConnect("127.0.0.1", config.service.mcpPort)) return;
-    if (proxy && proxy.exitCode !== null) throw new Error(`mcp-proxy exited with code ${proxy.exitCode}.`);
+    if (proxy && proxy.exitCode !== null) throw new Error(`mcp-proxy encerrou com codigo ${proxy.exitCode}.`);
     await sleep(200);
   }
-  throw new Error("Timed out waiting for the GWRM MCP port.");
+  throw new Error("Timeout aguardando porta MCP do GWRM.");
 }
 
 async function fetchStatus() {
@@ -96,7 +96,7 @@ async function fetchStatus() {
     body: JSON.stringify({ name: "gwrm_status", arguments: {} }),
     signal: AbortSignal.timeout(5000),
   });
-  if (!response.ok) throw new Error(`GWRM status returned HTTP ${response.status}.`);
+  if (!response.ok) throw new Error(`Status GWRM retornou HTTP ${response.status}.`);
   return (await response.json()).result;
 }
 
@@ -128,7 +128,7 @@ async function resolveProxyScript() {
   const proxyPackagePath = path.join(APP_ROOT, "node_modules", "mcp-proxy", "package.json");
   const proxyPackage = JSON.parse(await readFile(proxyPackagePath, "utf8"));
   const proxyBin = typeof proxyPackage.bin === "string" ? proxyPackage.bin : proxyPackage.bin?.["mcp-proxy"];
-  if (!proxyBin) throw new Error("mcp-proxy executable was not found in package.json.");
+  if (!proxyBin) throw new Error("Executavel do mcp-proxy nao encontrado no package.json.");
   return path.resolve(path.dirname(proxyPackagePath), proxyBin);
 }
 
@@ -188,17 +188,17 @@ try {
   proxy = await startProxy();
   proxy.once("close", (code) => {
     if (!shuttingDown) {
-      console.error(`mcp-proxy exited with code ${code ?? "unknown"}.`);
+      console.error(`mcp-proxy encerrou com codigo ${code ?? "desconhecido"}.`);
       void shutdown(code ?? 1);
     }
   });
   proxy.once("error", (error) => {
-    console.error(`Failed to start mcp-proxy: ${error.message}`);
+    console.error(`Falha ao iniciar mcp-proxy: ${error.message}`);
     void shutdown(1);
   });
   await waitForProxy();
   await printReady();
 } catch (error) {
-  console.error(`Failed to start GWRM: ${error.message}`);
+  console.error(`Falha ao iniciar GWRM: ${error.message}`);
   await shutdown(1);
 }

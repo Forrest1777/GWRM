@@ -1,5 +1,5 @@
-# The orchestrator may inspect GWRM and run/collect validation.
-# Workers remain the default owners of worktree lifecycle and graphical input.
+# O orquestrador pode acessar o GWRM para status e validacao, mas nao controla
+# obrigatoriamente a flag das worktrees. O worker e o responsavel pelo lifecycle.
 
 mcp_servers:
   gwrm:
@@ -16,6 +16,5 @@ mcp_servers:
         - run_gut_tests
         - run_gut_test_script
         - get_gut_run_status
-        - gui_status
       resources: false
       prompts: false

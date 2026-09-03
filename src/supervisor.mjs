@@ -11,7 +11,7 @@ const { values } = parseArgs({ options: { config: { type: "string" } }, allowPos
 const config = await loadConfig(values.config);
 const logger = new Logger(config.paths.logsDirectory);
 await logger.init();
-await logger.info("Initializing GWRM supervisor.", { config: config.configPath, version: "1.1.0" });
+await logger.info("Inicializando supervisor GWRM.", { config: config.configPath, version: "1.1.0" });
 
 const sessions = new SessionManager(config, logger);
 await sessions.init();
@@ -25,7 +25,7 @@ let shuttingDown = false;
 async function shutdown(signal) {
   if (shuttingDown) return;
   shuttingDown = true;
-  await logger.info("Shutting down GWRM supervisor.", { signal });
+  await logger.info("Encerrando supervisor GWRM.", { signal });
   await new Promise((resolve) => controlServer.close(() => resolve()));
   await sessions.shutdown();
   await computerUse.shutdown();
@@ -33,5 +33,5 @@ async function shutdown(signal) {
 }
 process.on("SIGINT", () => shutdown("SIGINT"));
 process.on("SIGTERM", () => shutdown("SIGTERM"));
-process.on("uncaughtException", async (error) => { await logger.error("Unhandled exception.", { error: error.stack || error.message }); await shutdown("uncaughtException"); });
-process.on("unhandledRejection", async (error) => { await logger.error("Unhandled promise rejection.", { error: error?.stack || String(error) }); });
+process.on("uncaughtException", async (error) => { await logger.error("Excecao nao tratada.", { error: error.stack || error.message }); await shutdown("uncaughtException"); });
+process.on("unhandledRejection", async (error) => { await logger.error("Promise rejeitada sem tratamento.", { error: error?.stack || String(error) }); });

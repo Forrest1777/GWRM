@@ -6,7 +6,7 @@ const APP_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".."
 
 function assertObject(value, label) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error(`${label} must be an object.`);
+    throw new Error(`${label} deve ser um objeto.`);
   }
   return value;
 }
@@ -18,7 +18,7 @@ function optionalObject(value, label) {
 
 function requiredString(value, label) {
   if (typeof value !== "string" || value.trim() === "") {
-    throw new Error(`${label} must be a non-empty string.`);
+    throw new Error(`${label} deve ser uma string nao vazia.`);
   }
   return value.trim();
 }
@@ -30,7 +30,7 @@ function optionalString(value, fallback, label) {
 
 function integer(value, label, min, max) {
   if (!Number.isInteger(value) || value < min || value > max) {
-    throw new Error(`${label} must be an integer between ${min} and ${max}.`);
+    throw new Error(`${label} deve ser inteiro entre ${min} e ${max}.`);
   }
   return value;
 }
@@ -41,7 +41,7 @@ function optionalInteger(value, fallback, label, min, max) {
 }
 
 function booleanValue(value, label) {
-  if (typeof value !== "boolean") throw new Error(`${label} must be a boolean.`);
+  if (typeof value !== "boolean") throw new Error(`${label} deve ser booleano.`);
   return value;
 }
 
@@ -52,7 +52,7 @@ function optionalBoolean(value, fallback, label) {
 
 function stringArray(value, label) {
   if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) {
-    throw new Error(`${label} must be a list of strings.`);
+    throw new Error(`${label} deve ser uma lista de strings.`);
   }
   return [...value];
 }
@@ -64,12 +64,12 @@ function optionalStringArray(value, fallback, label) {
 
 function enumString(value, fallback, allowed, label) {
   const text = optionalString(value, fallback, label);
-  if (!allowed.includes(text)) throw new Error(`${label} must be one of: ${allowed.join(", ")}.`);
+  if (!allowed.includes(text)) throw new Error(`${label} deve ser um de: ${allowed.join(", ")}.`);
   return text;
 }
 
 function resolveAppPath(value) {
-  const text = requiredString(value, "path");
+  const text = requiredString(value, "caminho");
   return path.isAbsolute(text) ? path.normalize(text) : path.resolve(APP_ROOT, text);
 }
 
@@ -78,7 +78,7 @@ export async function loadConfig(configPath) {
   const raw = await readFile(absoluteConfigPath, "utf8");
   const parsed = JSON.parse(raw.replace(/^\uFEFF/, ""));
 
-  if (parsed.schema_version !== 1) throw new Error("schema_version must be 1.");
+  if (parsed.schema_version !== 1) throw new Error("schema_version deve ser 1.");
   const service = assertObject(parsed.service, "service");
   const paths = assertObject(parsed.paths, "paths");
   const ports = assertObject(parsed.ports, "ports");
@@ -169,19 +169,19 @@ export async function loadConfig(configPath) {
     },
   };
 
-  if (!/^[A-Fa-f0-9]{64,128}$/.test(config.service.apiKey)) throw new Error("service.api_key must be hexadecimal and contain between 64 and 128 characters.");
+  if (!/^[A-Fa-f0-9]{64,128}$/.test(config.service.apiKey)) throw new Error("service.api_key deve ser hexadecimal e conter entre 64 e 128 caracteres.");
   if (config.godotMcp.command === "@node") config.godotMcp.command = config.paths.nodeExecutable;
 
   if (config.service.mcpPort === config.service.controlPort) throw new Error("service.mcp_port e service.control_port devem ser diferentes.");
-  if (config.ports.lspStart > config.ports.lspEnd) throw new Error("Invalid LSP port range.");
-  if (config.ports.lspProxyStart > config.ports.lspProxyEnd) throw new Error("Invalid LSP relay port range.");
-  if (config.ports.dapStart > config.ports.dapEnd) throw new Error("Invalid DAP port range.");
-  if (config.computerUse.waitTimeoutSeconds > config.computerUse.maxWaitTimeoutSeconds) throw new Error("computer_use.wait_timeout_seconds must not exceed max_wait_timeout_seconds.");
+  if (config.ports.lspStart > config.ports.lspEnd) throw new Error("Faixa LSP invalida.");
+  if (config.ports.lspProxyStart > config.ports.lspProxyEnd) throw new Error("Faixa de relay LSP invalida.");
+  if (config.ports.dapStart > config.ports.dapEnd) throw new Error("Faixa DAP invalida.");
+  if (config.computerUse.waitTimeoutSeconds > config.computerUse.maxWaitTimeoutSeconds) throw new Error("computer_use.wait_timeout_seconds nao pode exceder max_wait_timeout_seconds.");
   if (config.computerUse.permissionMode === "bounded" && (!config.computerUse.capabilityManifestFile || !config.computerUse.capabilityManifestApproved)) {
     throw new Error("computer_use.permission_mode=bounded exige capability_manifest_file e capability_manifest_approved=true.");
   }
   if (config.paths.containerWorktreesRoot !== config.paths.containerWorkspaceRoot && !config.paths.containerWorktreesRoot.startsWith(`${config.paths.containerWorkspaceRoot}/`)) {
-    throw new Error("container_worktrees_root must be inside container_workspace_root.");
+    throw new Error("container_worktrees_root deve estar dentro de container_workspace_root.");
   }
 
   await access(config.paths.godotExecutable);

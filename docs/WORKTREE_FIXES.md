@@ -1,14 +1,38 @@
-# Worktree and Cleanup Fixes — Historical Note
+# Correções de worktree e cleanup
 
-The current runtime preserves the following worktree integrity behavior introduced by earlier fixes:
+## Alterações
 
-- persisted worktree paths are migrated when configured roots change;
-- Hermes integration includes a mandatory worktree preflight;
-- Godot MCP clients and log streams are awaited during shutdown;
-- known process trees are terminated before a worktree is reported as stopped;
-- Windows cleanup searches for residual Godot processes whose command line still references the worktree path;
-- status exposes `residual_pids` and `directory_released`;
-- `status: stopped` is published only after manageable residual Godot processes are gone;
-- the Windows PowerShell process probe keeps the complete `Where-Object` predicate in one statement, preventing invalid `-and;` / `-or;` token sequences.
+- alinhamento dos exemplos, snippets, bridge e plugin ao root `/workspace/skill_system_framework/.worktrees`;
+- atualização automática de paths persistidos em `state/<worktree>.json` quando a configuração de root muda;
+- preflight obrigatório incluído no pacote de integração Hermes;
+- fechamento aguardado do cliente Godot MCP e dos streams de log;
+- encerramento da árvore de processos conhecida antes de publicar `stopped`;
+- busca e encerramento direcionado de processos Godot residuais que ainda referenciem o path da worktree no Windows;
+- novos campos de status: `residual_pids` e `directory_released`;
+- `status: stopped` somente depois da verificação de ausência de processos Godot residuais gerenciáveis;
+- novo teste para migração de state com roots antigos.
 
-`directory_released: true` confirms the GWRM-managed process boundary is clear. External software such as antivirus, Explorer, editors, or unrelated tools may still hold filesystem handles and must be diagnosed on the host if deletion fails.
+## Validação executada
+
+```text
+npm test
+16 testes aprovados, 0 falhas
+
+npm run check
+Sintaxe JavaScript válida
+```
+
+## Limite da garantia
+
+`directory_released: true` confirma que o GWRM encerrou seus processos conhecidos e não encontrou processos Godot cuja linha de comando ainda referencie a worktree. Software externo, antivírus, Explorer ou ferramentas não iniciadas pelo GWRM ainda podem manter handles; nesses casos, o erro deve ser investigado no host.
+
+## Correção v2 — probe PowerShell de processos residuais
+
+A primeira versão do probe compunha várias linhas com `Array.join("; ")`. Como
+duas linhas terminavam com `-and`, o comando resultante continha `-and;`, que é
+inválido no Windows PowerShell 5.1 e causava `ExpectedValueExpression` durante
+`activate_worktree` e `deactivate_worktree`.
+
+A versão v2 mantém todo o predicado de `Where-Object` em uma única instrução,
+exporta `buildWindowsProcessPathProbeScript()` para teste e inclui regressão
+automática que proíbe `-and;` e `-or;`.

@@ -25,11 +25,11 @@ export class RawMcpServer {
         const result = await this.#dispatch(request);
         this.#write({ jsonrpc: "2.0", id: request.id, result });
       } catch (error) {
-        await this.logger.error("Failed to handle MCP request.", { method: request.method, error: error.message });
+        await this.logger.error("Erro atendendo requisicao MCP.", { method: request.method, error: error.message });
         this.#write({ jsonrpc: "2.0", id: request.id, error: { code: -32603, message: error.message } });
       }
     });
-    process.stderr.write("GWRM MCP stdio ready.\n");
+    process.stderr.write("GWRM MCP stdio pronto.\n");
   }
 
   async #dispatch(request) {
@@ -50,7 +50,7 @@ export class RawMcpServer {
         if (result && Array.isArray(result.content)) return result;
         return { content: [{ type: "text", text: typeof result === "string" ? result : JSON.stringify(result, null, 2) }] };
       }
-      default: throw new Error(`Unsupported MCP method: ${request.method}`);
+      default: throw new Error(`Metodo MCP nao suportado: ${request.method}`);
     }
   }
 

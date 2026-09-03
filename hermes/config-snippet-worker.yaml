@@ -1,5 +1,5 @@
-# Merge these sections into the implementation-worker profile.
-# Replace placeholders with deployment-specific values.
+# Mescle estas secoes no config.yaml do implementation-worker.
+# Substitua <GWRM_API_KEY> pelo mesmo valor de service.api_key do gwrm.config.json.
 
 lsp:
   enabled: true
@@ -8,10 +8,10 @@ lsp:
       env:
         GWRM_CONTROL_URL: http://host.docker.internal:8130
         GWRM_API_KEY: <GWRM_API_KEY>
-        GWRM_CONTAINER_WORKTREES_ROOT: /workspace/project/.worktrees
+        GWRM_CONTAINER_WORKTREES_ROOT: /workspace/skill_system_framework/.worktrees
         GWRM_ENSURE_TIMEOUT: '190'
         GODOT_LSP_CONTAINER_ROOT: /workspace
-        GODOT_LSP_HOST_ROOT: C:/workspaces
+        GODOT_LSP_HOST_ROOT: E:/dev/ai_agents/hermes/workspace
         GODOT_LSP_CONNECT_TIMEOUT: '10'
 
 plugins:

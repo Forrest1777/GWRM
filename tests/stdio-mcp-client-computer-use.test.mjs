@@ -7,7 +7,7 @@ import { StdioMcpClient } from "../src/stdio-mcp-client.mjs";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const logger = { info: async () => {}, warn: async () => {}, error: async () => {} };
 
-test("StdioMcpClient supervises Cua MCP and shuts it down through EOF", async () => {
+test("StdioMcpClient supervisiona Cua MCP e encerra por EOF", async () => {
   const client = new StdioMcpClient({
     command: process.execPath,
     args: [path.join(root, "tests", "fixtures", "fake-cua-mcp.mjs")],

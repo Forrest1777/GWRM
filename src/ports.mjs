@@ -25,15 +25,15 @@ export async function allocatePort(host, start, end, reserved = new Set()) {
     if (reserved.has(port)) continue;
     if (await isPortAvailable(host, port)) return port;
   }
-  throw new Error(`No available port between ${start} and ${end}.`);
+  throw new Error(`Nenhuma porta disponivel entre ${start} e ${end}.`);
 }
 
 export async function waitForPort(host, port, timeoutMs, child = null) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    if (child && child.exitCode !== null) throw new Error(`Process exited before port ${port} became ready.`);
+    if (child && child.exitCode !== null) throw new Error(`Processo encerrou antes da porta ${port} ficar pronta.`);
     if (await canConnect(host, port, 500)) return;
     await new Promise((resolve) => setTimeout(resolve, 300));
   }
-  throw new Error(`Timed out waiting for ${host}:${port}.`);
+  throw new Error(`Timeout aguardando ${host}:${port}.`);
 }

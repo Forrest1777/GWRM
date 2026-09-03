@@ -1,6 +1,6 @@
 name: godot-lsp
-version: "1.1.0"
-description: Integrates Hermes native LSP with isolated Godot worktree sessions managed by GWRM.
+version: "1.0.0"
+description: Integra o LSP nativo do Hermes a sessoes Godot isoladas por worktree gerenciadas pelo GWRM.
 author: local
 kind: standalone
 provides_tools:

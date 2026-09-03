@@ -1,23 +1,33 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { isSafeToRetrySupervisorTool, supervisorRequestTimeoutMs } from "../src/mcp-facade-policy.mjs";
+import {
+  isSafeToRetrySupervisorTool,
+  supervisorRequestTimeoutMs,
+} from "../src/mcp-facade-policy.mjs";
 
 const config = {
-  sessions: { readyTimeoutSeconds: 180 },
   service: { shutdownTimeoutSeconds: 10 },
+  sessions: { readyTimeoutSeconds: 180 },
   godotMcp: { requestTimeoutSeconds: 300 },
-  computerUse: { requestTimeoutSeconds: 60, maxWaitTimeoutSeconds: 60 },
+  gut: { timeoutSeconds: 600 },
 };
 
-test("read/status tools are retry-safe while mutating tools are not", () => {
-  assert.equal(isSafeToRetrySupervisorTool("gwrm_status"), true);
-  assert.equal(isSafeToRetrySupervisorTool("gui_status"), true);
-  assert.equal(isSafeToRetrySupervisorTool("gui_inspect_window"), true);
-  assert.equal(isSafeToRetrySupervisorTool("gui_click"), false);
-  assert.equal(isSafeToRetrySupervisorTool("run_project"), false);
+test("GUT supervisionado usa somente timeout curto de control-plane", () => {
+  assert.equal(supervisorRequestTimeoutMs(config, "run_gut_tests"), 60000);
+  assert.equal(supervisorRequestTimeoutMs(config, "run_gut_test_script"), 60000);
+  assert.equal(supervisorRequestTimeoutMs(config, "get_gut_run_status"), 60000);
 });
 
-test("supervisor timeout policy keeps GUI waits bounded", () => {
-  assert.ok(supervisorRequestTimeoutMs(config, "gui_wait_for_window") >= 60_000);
-  assert.ok(supervisorRequestTimeoutMs(config, "launch_editor") >= 300_000);
+test("ativacao e desativacao usam timeouts adequados", () => {
+  assert.equal(supervisorRequestTimeoutMs(config, "activate_worktree"), 210000);
+  assert.equal(supervisorRequestTimeoutMs(config, "deactivate_worktree"), 40000);
+});
+
+test("somente consultas idempotentes podem ser repetidas", () => {
+  assert.equal(isSafeToRetrySupervisorTool("gwrm_status"), true);
+  assert.equal(isSafeToRetrySupervisorTool("get_worktree_status"), true);
+  assert.equal(isSafeToRetrySupervisorTool("get_gut_run_status"), true);
+  assert.equal(isSafeToRetrySupervisorTool("run_gut_tests"), false);
+  assert.equal(isSafeToRetrySupervisorTool("activate_worktree"), false);
+  assert.equal(isSafeToRetrySupervisorTool("run_project"), false);
 });

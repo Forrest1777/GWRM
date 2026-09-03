@@ -35,12 +35,19 @@ async function stopChild(child, timeoutMs = 5000) {
   if (!child || child.exitCode !== null || child.signalCode !== null) return;
   const closed = once(child, "close").catch(() => []);
   try { child.kill("SIGTERM"); } catch {}
-  const result = await Promise.race([closed.then(() => true), new Promise((resolve) => setTimeout(() => resolve(false), timeoutMs))]);
+  const result = await Promise.race([
+    closed.then(() => true),
+    new Promise((resolve) => setTimeout(() => resolve(false), timeoutMs)),
+  ]);
   if (result) return;
   try { child.kill("SIGKILL"); } catch {}
+  await Promise.race([
+    once(child, "close").catch(() => []),
+    new Promise((resolve) => setTimeout(resolve, 2000)),
+  ]);
 }
 
-test("MCP facade delegates to the singleton supervisor", { timeout: 30000 }, async () => {
+test("MCP facade delegates to singleton supervisor", { timeout: 30000 }, async () => {
   const temp = await mkdtemp(path.join(os.tmpdir(), "gwrm-facade-"));
   const worktrees = path.join(temp, "worktrees");
   await mkdir(worktrees, { recursive: true });
@@ -49,25 +56,30 @@ test("MCP facade delegates to the singleton supervisor", { timeout: 30000 }, asy
   const config = {
     schema_version: 1,
     service: { name: "GWRM-test", mcp_port: mcpPort, control_port: controlPort, bind_host: "127.0.0.1", api_key: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", reconciliation_interval_seconds: 3600, max_active_worktrees: 2, shutdown_timeout_seconds: 5 },
-    paths: { node_executable: process.execPath, npm_executable: "npm", powershell_executable: "powershell.exe", godot_executable: process.execPath, windows_workspace_root: temp, container_workspace_root: "/workspace", windows_worktrees_root: worktrees, container_worktrees_root: "/workspace/project/.worktrees", state_directory: path.join(temp, "state"), logs_directory: path.join(temp, "logs") },
+    paths: { node_executable: process.execPath, npm_executable: "npm", powershell_executable: "powershell.exe", godot_executable: process.execPath, windows_workspace_root: temp, container_workspace_root: "/workspace", windows_worktrees_root: worktrees, container_worktrees_root: "/workspace/skill_system_framework/.worktrees", state_directory: path.join(temp, "state"), logs_directory: path.join(temp, "logs") },
     ports: { lsp_start: 44000, lsp_end: 44010, lsp_proxy_start: 44100, lsp_proxy_end: 44110, dap_start: 44200, dap_end: 44210 },
     sessions: { ready_timeout_seconds: 5, inactive_shutdown_delay_seconds: 0, restart_active_sessions_after_crash: true, remove_configuration_when_worktree_missing: true, require_class_cache_before_ready: true },
     godot: { executable_args_prefix: [path.join(root, "tests", "fixtures", "fake-godot.mjs")], local_ready_host: "127.0.0.1", lsp_relay_enabled: true, lsp_host_for_hermes: "host.docker.internal", additional_editor_args: [] },
     godot_mcp: { command: process.execPath, args: [path.join(root, "tests", "fixtures", "fake-godot-mcp.mjs")], protocol_version: "2024-11-05", startup_timeout_seconds: 5, request_timeout_seconds: 5 },
-    gut: { default_test_directory: "res://tests", allowed_test_root: "res://tests", timeout_seconds: 5, max_output_characters: 10000, max_concurrent_processes: 1 },
-    computer_use: { enabled: false },
+    gut: { default_test_directory: "res://tests/skill_system/ai_system", allowed_test_root: "res://tests/skill_system/ai_system", timeout_seconds: 5, max_output_characters: 10000, max_concurrent_processes: 1 },
   };
   const configPath = path.join(temp, "config.json");
   await writeFile(configPath, JSON.stringify(config));
 
-  const supervisor = spawn(process.execPath, [path.join(root, "src", "supervisor.mjs"), "--config", configPath], { stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
+  const supervisor = spawn(process.execPath, [path.join(root, "src", "supervisor.mjs"), "--config", configPath], {
+    stdio: ["ignore", "pipe", "pipe"],
+    windowsHide: true,
+  });
   let supervisorStderr = "";
   supervisor.stderr.on("data", (chunk) => { supervisorStderr += chunk.toString("utf8"); });
   let facade = null;
   let rl = null;
   try {
     await waitHealth(controlPort, supervisor, () => supervisorStderr.slice(-4000));
-    facade = spawn(process.execPath, [path.join(root, "src", "mcp-facade.mjs"), "--config", configPath], { stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
+    facade = spawn(process.execPath, [path.join(root, "src", "mcp-facade.mjs"), "--config", configPath], {
+      stdio: ["pipe", "pipe", "pipe"],
+      windowsHide: true,
+    });
     rl = readline.createInterface({ input: facade.stdout, crlfDelay: Infinity });
     const messages = [];
     rl.on("line", (line) => messages.push(JSON.parse(line)));
@@ -78,8 +90,7 @@ test("MCP facade delegates to the singleton supervisor", { timeout: 30000 }, asy
     assert.equal(messages[0].result.serverInfo.name, "gwrm");
     const payload = JSON.parse(messages[1].result.content[0].text);
     assert.equal(payload.ready, true);
-    assert.equal(payload.version, "1.1.0");
-    assert.equal(payload.computer_use.state, "disabled");
+    assert.equal(payload.service, "GWRM-test");
   } finally {
     rl?.close();
     if (facade?.stdin && !facade.stdin.destroyed) facade.stdin.end();

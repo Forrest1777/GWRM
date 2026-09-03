@@ -1,8 +1,8 @@
 {
   "name": "gwrm",
-  "version": "1.1.0",
+  "version": "1.0.0",
   "private": true,
-  "description": "Godot Worktree Runtime Manager for Hermes, Docker, LSP, Godot MCP, GUT, and host-side Computer Use.",
+  "description": "Godot Worktree Runtime Manager for Hermes, Docker, LSP, Godot MCP and GUT.",
   "type": "module",
   "engines": {
     "node": ">=20"

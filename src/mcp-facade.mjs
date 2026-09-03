@@ -42,8 +42,8 @@ async function callSupervisor(name, args) {
       lastError = error;
       if (!safeToRetry) {
         throw new Error(
-          `Failed to call ${name} on the supervisor after ${timeoutMs} ms: ${error.message}. ` +
-          "The operation may still be running in the supervisor; do not repeat it automatically before checking status/logs.",
+          `Falha chamando ${name} no supervisor apos ${timeoutMs} ms: ${error.message}. ` +
+          "A operacao pode continuar no supervisor; nao repita automaticamente sem consultar o status/log.",
         );
       }
       continue;
@@ -52,18 +52,18 @@ async function callSupervisor(name, args) {
     const payload = await response.json().catch(() => ({ error: `HTTP ${response.status}` }));
     if (response.ok) return payload.result;
 
-    const responseError = new Error(payload.error || `Supervisor returned HTTP ${response.status}.`);
+    const responseError = new Error(payload.error || `Supervisor retornou HTTP ${response.status}.`);
     if (!safeToRetry || !retryableStatusCodes.has(response.status)) throw responseError;
     lastError = responseError;
   }
 
-  throw new Error("GWRM supervisor is temporarily unavailable: " + (lastError?.message || "unknown failure"));
+  throw new Error("Supervisor GWRM temporariamente indisponivel: " + (lastError?.message || "falha desconhecida"));
 }
 
 const server = new RawMcpServer({
   name: "gwrm",
   version: "1.1.0",
-  instructions: "Always provide worktree_name. Godot, GUT, and GUI operations are routed to the isolated worktree runtime. For GUI work, prefer gui_inspect_window without screenshots, use element_token when available, keep delivery_mode=background by default, and call gui_capture_window only when visual evidence is required.",
+  instructions: "Sempre informe worktree_name. Godot, GUT e GUI sao roteados ao runtime isolado da worktree. Para GUI, prefira gui_inspect_window (sem screenshot), use element_token quando disponivel, mantenha delivery_mode=background e chame gui_capture_window somente quando a evidencia visual for necessaria.",
   tools: buildTools(),
   handler: callSupervisor,
   logger,

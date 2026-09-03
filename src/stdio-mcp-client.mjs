@@ -11,7 +11,7 @@ async function waitForChildClose(child, timeoutMs) {
 }
 
 export class StdioMcpClient {
-  constructor({ command, args, cwd, env, protocolVersion, startupTimeoutMs, requestTimeoutMs, logger, label, serverName = "Dedicated Godot MCP" }) {
+  constructor({ command, args, cwd, env, protocolVersion, startupTimeoutMs, requestTimeoutMs, logger, label, serverName = "Godot MCP dedicado" }) {
     this.command = command;
     this.args = args;
     this.cwd = cwd;
@@ -40,13 +40,13 @@ export class StdioMcpClient {
 
     this.child.stderr.on("data", (chunk) => {
       const text = chunk.toString("utf8").trim();
-      if (text) this.logger.info(`Output from ${this.serverName}.`, { worktree: this.label || undefined, component: this.serverName, text: text.slice(-2000) });
+      if (text) this.logger.info(`Saida de ${this.serverName}.`, { worktree: this.label || undefined, component: this.serverName, text: text.slice(-2000) });
     });
     this.child.once("error", (error) => this.#failAll(error));
     this.child.once("close", (code, signal) => {
       this.closed = true;
       this.readline?.close();
-      this.#failAll(new Error(`${this.serverName}${this.label ? ` ${this.label}` : ""} exited (code=${code}, signal=${signal}).`));
+      this.#failAll(new Error(`${this.serverName}${this.label ? ` ${this.label}` : ""} encerrou (codigo=${code}, sinal=${signal}).`));
     });
 
     this.readline = readline.createInterface({ input: this.child.stdout, crlfDelay: Infinity });
@@ -68,7 +68,7 @@ export class StdioMcpClient {
     let message;
     try { message = JSON.parse(line); }
     catch {
-      this.logger.warn(`Non-JSON line received from ${this.serverName}.`, { worktree: this.label || undefined, component: this.serverName, line: line.slice(0, 1000) });
+      this.logger.warn(`Linha nao JSON recebida de ${this.serverName}.`, { worktree: this.label || undefined, component: this.serverName, line: line.slice(0, 1000) });
       return;
     }
     if (message.id === undefined || message.id === null) return;
@@ -89,7 +89,7 @@ export class StdioMcpClient {
   }
 
   #send(message) {
-    if (!this.child?.stdin || this.closed) throw new Error(`${this.serverName}${this.label ? ` ${this.label}` : ""} is not active.`);
+    if (!this.child?.stdin || this.closed) throw new Error(`${this.serverName}${this.label ? ` ${this.label}` : ""} nao esta ativo.`);
     this.child.stdin.write(`${JSON.stringify(message)}\n`);
   }
 
@@ -98,7 +98,7 @@ export class StdioMcpClient {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
-        reject(new Error(`MCP timeout in ${method} for ${this.serverName}${this.label ? ` ${this.label}` : ""}.`));
+        reject(new Error(`Timeout MCP em ${method} para ${this.serverName}${this.label ? ` ${this.label}` : ""}.`));
       }, timeoutMs);
       this.pending.set(id, { resolve, reject, timer });
       this.#send({ jsonrpc: "2.0", id, method, params });
@@ -120,7 +120,7 @@ export class StdioMcpClient {
   async close() {
     const child = this.child;
     this.closed = true;
-    this.#failAll(new Error(`${this.serverName}${this.label ? ` ${this.label}` : ""} was closed.`));
+    this.#failAll(new Error(`${this.serverName}${this.label ? ` ${this.label}` : ""} foi encerrado.`));
 
     if (!child) {
       this.readline?.close();
@@ -141,7 +141,7 @@ export class StdioMcpClient {
 
     this.readline?.close();
     if (!closed) {
-      throw new Error(`${this.serverName}${this.label ? ` ${this.label}` : ""} remained active after cleanup.`);
+      throw new Error(`${this.serverName}${this.label ? ` ${this.label}` : ""} permaneceu ativo apos cleanup.`);
     }
 
     try { child.stdout?.destroy(); } catch {}

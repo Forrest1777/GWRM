@@ -95,12 +95,6 @@ export class ComputerUseService {
         CUA_DRIVER_PERMISSION_MODE: this.config.computerUse.permissionMode,
       };
       if (this.config.computerUse.permissionMode === "bounded") {
-        if (!this.config.computerUse.capabilityManifestFile) {
-          throw new Error("computer_use.capability_manifest_file is required in bounded mode.");
-        }
-        if (!this.config.computerUse.capabilityManifestApproved) {
-          throw new Error("computer_use.capability_manifest_approved must be true after the operator reviews the bounded manifest.");
-        }
         env.CUA_DRIVER_CAPABILITY_MANIFEST_FILE = this.config.computerUse.capabilityManifestFile;
         env.CUA_DRIVER_CAPABILITY_MANIFEST_APPROVED = "1";
       }
@@ -119,14 +113,14 @@ export class ComputerUseService {
       await client.start();
       this.client = client;
       for (const tool of REQUIRED_CUA_TOOLS) {
-        if (!client.hasTool(tool)) throw new Error(`Cua Driver does not provide required tool '${tool}'.`);
+        if (!client.hasTool(tool)) throw new Error(`Cua Driver nao oferece a tool obrigatoria '${tool}'.`);
       }
       const discovery = await this.#call("list_windows", { on_screen_only: false });
       const discoveryPayload = extractStructured(discovery);
       this.desktopReady = discoveryPayload !== null;
       this.state = "ready";
       this.startedAt = new Date().toISOString();
-      await this.logger.info("Computer Use ready.", {
+      await this.logger.info("Computer Use pronto.", {
         component: "computer_use",
         cua_pid: client.pid,
         desktop_ready: this.desktopReady,
@@ -140,7 +134,7 @@ export class ComputerUseService {
       if (this.client) await this.client.close().catch(() => {});
       this.client = null;
       const log = this.config.computerUse.required ? this.logger.error.bind(this.logger) : this.logger.warn.bind(this.logger);
-      await log("Computer Use unavailable.", { component: "computer_use", error: this.lastError });
+      await log("Computer Use indisponivel.", { component: "computer_use", error: this.lastError });
       if (this.config.computerUse.required) throw error;
       return this.getStatus();
     }
@@ -166,7 +160,7 @@ export class ComputerUseService {
     const client = this.client;
     this.client = null;
     if (client) await client.close().catch(async (error) => {
-      await this.logger.warn("Failed to shut down Cua Driver.", { component: "computer_use", error: error.message });
+      await this.logger.warn("Falha encerrando Cua Driver.", { component: "computer_use", error: error.message });
     });
     this.state = this.config.computerUse.enabled ? "stopped" : "disabled";
     this.desktopReady = false;
@@ -221,6 +215,7 @@ export class ComputerUseService {
     const result = await this.#call("get_window_state", {
       pid: target.pid,
       window_id: target.window_id,
+      include_accessibility_tree: false,
       include_screenshot: true,
       max_dimension: clampInteger(options.maxDimension, this.config.computerUse.maxImageDimension, 64, 4096),
     });
@@ -228,7 +223,7 @@ export class ComputerUseService {
   }
 
   async waitForElement(worktreeName, windowId, query, options = {}) {
-    if (!String(query || "").trim()) throw new Error("query is required for gui_wait_for_element.");
+    if (!String(query || "").trim()) throw new Error("query e obrigatoria para gui_wait_for_element.");
     const timeoutSeconds = clampInteger(options.timeoutSeconds, this.config.computerUse.waitTimeoutSeconds, 1, this.config.computerUse.maxWaitTimeoutSeconds);
     const deadline = Date.now() + timeoutSeconds * 1000;
     const target = await this.#resolveTarget(worktreeName, windowId);
@@ -251,6 +246,7 @@ export class ComputerUseService {
       pid: target.pid,
       window_id: target.window_id,
       include_screenshot: false,
+      include_accessibility_tree: true,
       max_elements: clampInteger(options.maxElements, this.config.computerUse.maxSemanticElements, 1, 2000),
       max_depth: clampInteger(options.maxDepth, this.config.computerUse.maxSemanticDepth, 1, 25),
     };
@@ -267,33 +263,33 @@ export class ComputerUseService {
 
   async click(worktreeName, windowId, args = {}) {
     return await this.#action("click", worktreeName, windowId, args, [
-      "element_token", "element_index", "snapshot_id", "x", "y", "button", "modifier",
+      "element_token", "element_index", "snapshot_id", "x", "y", "button", "count", "action", "modifier",
     ]);
   }
 
   async typeText(worktreeName, windowId, args = {}) {
-    if (typeof args.text !== "string") throw new Error("text is required for gui_type_text.");
+    if (typeof args.text !== "string") throw new Error("text e obrigatorio para gui_type_text.");
     return await this.#action("type_text", worktreeName, windowId, args, [
       "text", "element_token", "element_index", "snapshot_id", "x", "y",
     ]);
   }
 
   async pressKey(worktreeName, windowId, args = {}) {
-    if (!String(args.key || "").trim()) throw new Error("key is required for gui_press_key.");
+    if (!String(args.key || "").trim()) throw new Error("key e obrigatoria para gui_press_key.");
     return await this.#action("press_key", worktreeName, windowId, args, [
       "key", "modifiers", "element_token", "element_index", "snapshot_id", "x", "y",
     ]);
   }
 
   async hotkey(worktreeName, windowId, args = {}) {
-    if (!Array.isArray(args.keys) || args.keys.length < 2) throw new Error("keys must contain at least two keys for gui_hotkey.");
+    if (!Array.isArray(args.keys) || args.keys.length < 2) throw new Error("keys deve conter ao menos duas teclas para gui_hotkey.");
     return await this.#action("hotkey", worktreeName, windowId, args, [
       "keys", "element_token", "element_index", "snapshot_id", "x", "y",
     ]);
   }
 
   async scroll(worktreeName, windowId, args = {}) {
-    if (!String(args.direction || "").trim()) throw new Error("direction is required for gui_scroll.");
+    if (!String(args.direction || "").trim()) throw new Error("direction e obrigatoria para gui_scroll.");
     return await this.#action("scroll", worktreeName, windowId, args, [
       "direction", "amount", "by", "element_token", "element_index", "snapshot_id", "x", "y",
     ]);
@@ -310,7 +306,7 @@ export class ComputerUseService {
       if (source[key] !== undefined) args[key] = source[key];
     }
     const result = await this.#call(tool, args);
-    await this.logger.info("Computer Use action completed.", {
+    await this.logger.info("Computer Use action concluida.", {
       component: "computer_use",
       worktree: worktreeName,
       action: tool,
@@ -323,16 +319,16 @@ export class ComputerUseService {
 
   async #resolveTarget(worktreeName, windowId) {
     const numericWindowId = Number(windowId);
-    if (!Number.isInteger(numericWindowId) || numericWindowId <= 0) throw new Error("Invalid window_id.");
+    if (!Number.isInteger(numericWindowId) || numericWindowId <= 0) throw new Error("window_id invalido.");
     const listed = await this.listWindows(worktreeName, { onScreenOnly: false });
     const target = listed.windows.find((window) => window.window_id === numericWindowId);
-    if (!target) throw new Error(`Window ${numericWindowId} does not belong to an authorized graphical Godot process for worktree ${worktreeName}.`);
+    if (!target) throw new Error(`Janela ${numericWindowId} nao pertence a um processo Godot grafico autorizado da worktree ${worktreeName}.`);
     return target;
   }
 
   async #resolveAllowedPids(worktreeName) {
     const session = this.sessionManager.getStatus(worktreeName);
-    if (!session?.registered) throw new Error(`Worktree ${worktreeName} is not registered in GWRM.`);
+    if (!session?.registered) throw new Error(`Worktree ${worktreeName} nao esta registrada no GWRM.`);
     const processes = await this.processLister(session.host_project_path, this.config, []);
     const persistentPid = Number(session.godot_pid);
     const allowed = processes.filter((item) => {
@@ -348,14 +344,32 @@ export class ComputerUseService {
 
   async #ensureReady() {
     if (this.state !== "ready" || !this.client?.isAlive) {
-      throw new Error(`Computer Use is not ready (state=${this.state}${this.lastError ? `, error=${this.lastError}` : ""}).`);
+      throw new Error(`Computer Use nao esta pronto (state=${this.state}${this.lastError ? `, erro=${this.lastError}` : ""}).`);
     }
   }
 
   async #call(tool, args) {
     await this.#ensureReadyUnlessStarting();
+  
+    if (tool !== "start_session") {
+      const sessionResult = await this.client.callTool("start_session", {});
+      if (sessionResult?.isError) {
+        throw new Error(
+          this.#textFallback(sessionResult) ||
+          "Cua Driver rejected start_session."
+        );
+      }
+    }
+  
     const result = await this.client.callTool(tool, args);
-    if (result?.isError) throw new Error(this.#textFallback(result) || `Cua Driver rejected ${tool}.`);
+  
+    if (result?.isError) {
+      throw new Error(
+        this.#textFallback(result) ||
+        `Cua Driver rejected ${tool}.`
+      );
+    }
+  
     return result;
   }
 

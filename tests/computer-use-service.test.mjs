@@ -76,7 +76,7 @@ function fixture() {
   return { service, fakeClient };
 }
 
-test("Computer Use starts, scopes windows to graphical Godot processes, and stays semantic-first", async () => {
+test("Computer Use inicia, limita janelas a Godot grafico da worktree e usa semantic-first", async () => {
   const { service, fakeClient } = fixture();
   await service.init();
   assert.equal(service.getStatus().ready, true);
@@ -92,17 +92,19 @@ test("Computer Use starts, scopes windows to graphical Godot processes, and stay
   assert.equal(inspected.state.elements[0].element_token, "tok-3");
   const inspectCall = fakeClient.calls.findLast((call) => call.name === "get_window_state");
   assert.equal(inspectCall.args.include_screenshot, false);
+  assert.equal(inspectCall.args.include_accessibility_tree, true);
 
   await service.shutdown();
 });
 
-test("Screenshots are opt-in and actions default to background delivery", async () => {
+test("Screenshot e opt-in e acoes usam background por padrao", async () => {
   const { service, fakeClient } = fixture();
   await service.init();
 
   const captured = await service.captureWindow("t_test", 77, {});
   assert.equal(captured.content[0].type, "image");
   const captureCall = fakeClient.calls.findLast((call) => call.name === "get_window_state");
+  assert.equal(captureCall.args.include_accessibility_tree, false);
   assert.equal(captureCall.args.include_screenshot, true);
   assert.equal(captureCall.args.max_dimension, 800);
 
@@ -113,11 +115,11 @@ test("Screenshots are opt-in and actions default to background delivery", async 
   assert.equal(click.args.window_id, 77);
   assert.equal(click.args.element_token, "tok-3");
 
-  await assert.rejects(() => service.click("t_test", 999, { x: 1, y: 1 }), /does not belong/);
+  await assert.rejects(() => service.click("t_test", 999, { x: 1, y: 1 }), /nao pertence/);
   await service.shutdown();
 });
 
-test("wait_for_window and wait_for_element poll internally", async () => {
+test("wait_for_window e wait_for_element executam polling internamente", async () => {
   const { service } = fixture();
   await service.init();
   const window = await service.waitForWindow("t_test", { titleContains: "Scene", timeoutSeconds: 1 });

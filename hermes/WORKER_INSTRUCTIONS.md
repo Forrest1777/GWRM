@@ -1,17 +1,19 @@
-# GWRM instructions for implementation-worker
+# Instrucoes GWRM para `implementation-worker`
 
-When starting a Kanban task in a worktree:
+Ao iniciar uma tarefa Kanban em uma worktree:
 
-1. Resolve and validate `HERMES_KANBAN_WORKSPACE`; the dispatcher must already have materialized the worktree.
-2. Run the `worktree-preflight` skill and proceed only when `passed: true`.
-3. Resolve `worktree_name` from the workspace basename.
-4. Perform static executability analysis first. Activate GWRM only when the task needs Godot LSP, GUT, `run_project`, debug, scene/resource tools, or graphical interaction.
-5. When required, call `activate_worktree(worktree_name)` once and wait for `status: ready`. Repeated calls reuse a healthy runtime.
-6. Always pass the same `worktree_name` to GWRM tools.
-7. `run_gut_tests` and `run_gut_test_script` return an `operation_id`. Query `get_gut_run_status(operation_id)` until `terminal: true`. Do not start an identical second run while the first is queued/running.
-8. If `run_project` starts a graphical scene, use `gui_wait_for_window` then `gui_inspect_window`. Prefer semantic element tokens; use `gui_capture_window` only when needed.
-9. Use background GUI delivery first. Escalate only the failing action to `foreground` when required and re-inspect state afterward.
-10. Call `stop_project` only if `run_project` was started.
-11. Before completing the task, deactivate only if the worktree was activated. Confirm `status: stopped`, `residual_pids: []`, and `directory_released: true`.
+1. Resolva e valide `HERMES_KANBAN_WORKSPACE`; o dispatcher ja deve ter materializado a worktree.
+2. Execute a skill `worktree-preflight` e prossiga somente com `passed: true`.
+3. Resolva `worktree_name` pelo basename. Para `/workspace/skill_system_framework/.worktrees/t_a74adce7`, use `t_a74adce7`.
+4. Faca primeiro a analise estatica de executabilidade. Ative o GWRM somente quando o card realmente exigir LSP Godot, GUT, `run_project`, debug ou outra operacao de runtime.
+5. Quando necessario, chame `activate_worktree(worktree_name)` uma vez e aguarde `status: ready`. Repeticoes reutilizam o runtime ja saudavel.
+6. Use sempre as tools GWRM informando essa mesma `worktree_name`.
+7. `run_gut_tests` e `run_gut_test_script` iniciam uma execucao supervisionada e retornam `operation_id` imediatamente. Consulte `get_gut_run_status(operation_id)` ate `terminal: true`; em `completed`, leia `result`. Nao inicie uma segunda execucao identica enquanto a primeira estiver `queued` ou `running`.
+8. Para validacao grafica, use `run_project`/`launch_editor` para criar a janela e depois as tools `gui_*`; o GWRM so autoriza janelas Godot pertencentes a processos associados a mesma worktree.
+9. Em GUI, use `gui_wait_for_window` e `gui_wait_for_element` em vez de loops de polling no agente.
+10. Percepcao GUI deve ser semantic-first: use `gui_inspect_window` com `query` quando possivel, prefira `element_token`, mantenha `delivery_mode=background` e use `gui_capture_window` somente quando a arvore semantica nao for suficiente.
+11. Escale uma acao isolada para `delivery_mode=foreground` somente depois de uma tentativa background nao produzir o efeito esperado.
+12. Chame `stop_project` somente se `run_project` tiver sido iniciado. A tool e idempotente e retorna `already_stopped` quando nao ha projeto ativo.
+13. Antes de concluir o card, desative somente se a worktree tiver sido ativada. `deactivate_worktree` e idempotente; confirme `status: stopped`, `residual_pids: []` e `directory_released: true`. Se a worktree nunca foi registrada, `get_worktree_status` retorna `status: not_registered` sem erro.
 
-The worker does not choose ports, translate paths manually, or start unmanaged Godot/Cua processes. GWRM owns the Windows runtime boundary.
+O worker nao escolhe portas, nao converte caminhos para Windows, nao inicia Cua Driver e nao inicia processos manualmente. O GWRM e responsavel por reconciliar Godot headless, LSP, Godot MCP, GUT, Computer Use e cleanup.
