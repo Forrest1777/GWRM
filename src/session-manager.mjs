@@ -1,8 +1,9 @@
 import { createWriteStream } from "node:fs";
-import { access, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { once } from "node:events";
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { allocatePort, canConnect, waitForPort } from "./ports.mjs";
 import { resolveWorktreePaths, validateWorktreeName } from "./paths.mjs";
 import {
@@ -54,6 +55,7 @@ export class SessionManager {
       try {
         const record = JSON.parse(await readFile(path.join(this.config.paths.stateDirectory, file), "utf8"));
         validateWorktreeName(record.worktree_name);
+        const migrated = this.#normalizeRecord(record);
         const resolved = resolveWorktreePaths(record.worktree_name, this.config);
         const pathChanged = record.host_project_path !== resolved.hostPath
           || record.container_project_path !== resolved.containerPath;
@@ -62,7 +64,7 @@ export class SessionManager {
         record.residual_pids = Array.isArray(record.residual_pids) ? record.residual_pids : [];
         record.directory_released = Boolean(record.directory_released);
         this.records.set(record.worktree_name, record);
-        if (pathChanged) {
+        if (pathChanged || migrated) {
           await this.#persist(record);
           await this.logger.info("Paths de state atualizados para a configuracao vigente.", {
             worktree: record.worktree_name,
@@ -84,6 +86,7 @@ export class SessionManager {
       const paths = resolveWorktreePaths(name, this.config);
       await this.#validateProject(paths.hostPath);
       let record = this.records.get(name) || this.#newRecord(paths);
+      const operation = this.#requestOperation(record, true);
       const previousGodotPid = record.godot_pid;
       const previousMcpPid = record.godot_mcp_pid;
       record.host_project_path = paths.hostPath;
@@ -96,10 +99,28 @@ export class SessionManager {
       record.last_request_source = source;
       this.records.set(name, record);
       await this.#persist(record);
-      await this.#ensureRunning(record);
+      try {
+        if (!operation.terminal) {
+          this.#transitionOperation(record, operation, "running");
+          await this.#persist(record);
+        }
+        await this.#ensureRunning(record);
+        if (!operation.terminal) {
+          this.#transitionOperation(record, operation, "completed");
+          await this.#persist(record);
+        }
+      } catch (error) {
+        if (!operation.terminal) {
+          this.#transitionOperation(record, operation, "failed", error.message);
+          await this.#persist(record);
+        }
+        throw error;
+      }
       const status = this.getStatus(name);
       return {
         ...status,
+        operation_id: operation.operation_id,
+        generation: operation.generation,
         reused_existing_runtime: Boolean(
           previousGodotPid
           && previousMcpPid
@@ -119,6 +140,8 @@ export class SessionManager {
       const record = this.records.get(name);
       if (!record) return { ...this.getStatus(name), already_inactive: true };
 
+      const operation = this.#requestOperation(record, false);
+
       const runtime = this.runtime.get(name);
       if (
         !record.desired_active
@@ -127,7 +150,12 @@ export class SessionManager {
         && record.directory_released
         && (!record.residual_pids || record.residual_pids.length === 0)
       ) {
-        return { ...this.getStatus(name), already_inactive: true };
+        return {
+          ...this.getStatus(name),
+          operation_id: operation.operation_id,
+          generation: operation.generation,
+          already_inactive: true,
+        };
       }
 
       record.desired_active = false;
@@ -138,8 +166,29 @@ export class SessionManager {
       record.last_requested_at = now();
       record.last_request_source = source;
       await this.#persist(record);
-      if (shutdownDelay === 0) await this.#stopRuntime(record, "deactivated");
-      return { ...this.getStatus(name), already_inactive: false };
+      try {
+        if (!operation.terminal) {
+          this.#transitionOperation(record, operation, "running");
+          await this.#persist(record);
+        }
+        if (shutdownDelay === 0) await this.#stopRuntime(record, "deactivated");
+        if (!operation.terminal && shutdownDelay === 0) {
+          this.#transitionOperation(record, operation, "completed");
+          await this.#persist(record);
+        }
+      } catch (error) {
+        if (!operation.terminal) {
+          this.#transitionOperation(record, operation, "failed", error.message);
+          await this.#persist(record);
+        }
+        throw error;
+      }
+      return {
+        ...this.getStatus(name),
+        operation_id: operation.operation_id,
+        generation: operation.generation,
+        already_inactive: false,
+      };
     });
   }
 
@@ -184,6 +233,15 @@ export class SessionManager {
 
   listStatuses() {
     return [...this.records.keys()].sort().map((name) => this.getStatus(name));
+  }
+
+  getOperation(operationId) {
+    const target = String(operationId || "");
+    for (const record of this.records.values()) {
+      const operation = (record.operations || []).find((item) => item.operation_id === target);
+      if (operation) return cloneState(operation);
+    }
+    return { operation_id: target, status: "not_found", terminal: true };
   }
 
   async callGodotTool(name, toolName, args) {
@@ -245,10 +303,37 @@ export class SessionManager {
           return;
         }
         if (record.desired_active) {
-          if (record.status !== "failed" || this.config.sessions.restartActiveSessionsAfterCrash) await this.#ensureRunning(record);
-        } else if (this.runtime.has(name)) {
+          const operation = this.#currentOperation(record);
+          try {
+            if (operation && !operation.terminal) {
+              this.#transitionOperation(record, operation, "running");
+              await this.#persist(record);
+            }
+            if (record.status !== "failed" || this.config.sessions.restartActiveSessionsAfterCrash) await this.#ensureRunning(record);
+            if (operation && !operation.terminal) {
+              this.#transitionOperation(record, operation, "completed");
+              await this.#persist(record);
+            }
+          } catch (error) {
+            if (operation && !operation.terminal) {
+              this.#transitionOperation(record, operation, "failed", error.message);
+              await this.#persist(record);
+            }
+            throw error;
+          }
+        } else {
+          const operation = this.#currentOperation(record);
           const due = !record.shutdown_not_before || Date.now() >= Date.parse(record.shutdown_not_before);
-          if (due) await this.#stopRuntime(record, `reconcile_${reason}`);
+          const needsStop = this.runtime.has(name)
+            || record.status !== "stopped"
+            || Boolean(record.godot_pid || record.godot_mcp_pid)
+            || (record.residual_pids || []).length > 0
+            || !record.directory_released;
+          if (due && needsStop) await this.#stopRuntime(record, `reconcile_${reason}`);
+          if (due && operation && !operation.terminal) {
+            this.#transitionOperation(record, operation, "completed");
+            await this.#persist(record);
+          }
         }
       });
     }
@@ -264,9 +349,117 @@ export class SessionManager {
     }
   }
 
+  #normalizeRecord(record) {
+    let changed = false;
+    if (record.schema_version !== 2) {
+      record.schema_version = 2;
+      changed = true;
+    }
+    if (!Array.isArray(record.operations)) {
+      record.operations = [];
+      changed = true;
+    }
+    for (const operation of record.operations) {
+      const terminal = ["completed", "failed", "superseded"].includes(operation.status);
+      if (operation.terminal !== terminal) {
+        operation.terminal = terminal;
+        changed = true;
+      }
+      if (!operation.worktree_name) {
+        operation.worktree_name = record.worktree_name;
+        changed = true;
+      }
+      if (!operation.action) {
+        operation.action = operation.desired_active ? "activate" : "deactivate";
+        changed = true;
+      }
+      if (!operation.requested_at) {
+        operation.requested_at = record.last_requested_at || record.updated_at || now();
+        changed = true;
+      }
+      if (!operation.updated_at) {
+        operation.updated_at = operation.requested_at;
+        changed = true;
+      }
+      if (!Object.hasOwn(operation, "completed_at")) {
+        operation.completed_at = terminal ? operation.updated_at : null;
+        changed = true;
+      }
+      if (!Object.hasOwn(operation, "error")) {
+        operation.error = null;
+        changed = true;
+      }
+      if (!operation.observed_state || typeof operation.observed_state !== "object") {
+        operation.observed_state = this.#observedState(record);
+        changed = true;
+      }
+    }
+    const newest = [...record.operations].sort((left, right) => right.generation - left.generation)[0];
+    if (!record.current_operation_id && newest) {
+      record.current_operation_id = newest.operation_id;
+      changed = true;
+    }
+    return changed;
+  }
+
+  #currentOperation(record) {
+    return (record.operations || []).find((item) => item.operation_id === record.current_operation_id) || null;
+  }
+
+  #requestOperation(record, desiredActive) {
+    const current = this.#currentOperation(record);
+    if (current?.desired_active === desiredActive) return current;
+
+    if (current && !current.terminal) this.#transitionOperation(record, current, "superseded");
+    const generation = Math.max(0, ...(record.operations || []).map((item) => Number(item.generation) || 0)) + 1;
+    const requestedAt = now();
+    const operation = {
+      operation_id: `lifecycle_${randomUUID()}`,
+      worktree_name: record.worktree_name,
+      generation,
+      action: desiredActive ? "activate" : "deactivate",
+      desired_active: desiredActive,
+      status: "queued",
+      terminal: false,
+      requested_at: requestedAt,
+      updated_at: requestedAt,
+      completed_at: null,
+      error: null,
+      observed_state: this.#observedState(record),
+    };
+    record.operations.push(operation);
+    record.current_operation_id = operation.operation_id;
+    return operation;
+  }
+
+  #transitionOperation(record, operation, status, error = null) {
+    operation.status = status;
+    operation.terminal = ["completed", "failed", "superseded"].includes(status);
+    operation.updated_at = now();
+    operation.error = error;
+    if (operation.terminal && !operation.completed_at) operation.completed_at = operation.updated_at;
+    operation.observed_state = this.#observedState(record);
+  }
+
+  #observedState(record) {
+    const runtime = this.runtime.get(record.worktree_name);
+    return {
+      status: record.status,
+      runtime: {
+        active: Boolean(runtime),
+        godot_pid: record.godot_pid,
+        godot_mcp_pid: record.godot_mcp_pid,
+        godot_mcp_ready: Boolean(runtime?.mcp?.isAlive),
+        project_started: Boolean(runtime?.projectStarted),
+      },
+      residual_pids: [...(record.residual_pids || [])],
+      directory_released: Boolean(record.directory_released),
+    };
+  }
+
   #newRecord(paths) {
     return {
-      schema_version: 1,
+      schema_version: 2,
       worktree_name: paths.name,
       container_project_path: paths.containerPath,
       host_project_path: paths.hostPath,
@@ -285,6 +478,8 @@ export class SessionManager {
       ready_at: null,
       last_error: null,
       shutdown_not_before: null,
+      operations: [],
+      current_operation_id: null,
     };
   }
 
@@ -571,7 +766,17 @@ export class SessionManager {
   #recordPath(name) { return path.join(this.config.paths.stateDirectory, `${name}.json`); }
   async #persist(record) {
     record.updated_at = now();
-    await writeFile(this.#recordPath(record.worktree_name), `${JSON.stringify(record, null, 2)}\n`, "utf8");
+    const operation = this.#currentOperation(record);
+    if (operation) {
+      operation.updated_at = record.updated_at;
+      operation.terminal = ["completed", "failed", "superseded"].includes(operation.status);
+      if (operation.terminal && !operation.completed_at) operation.completed_at = operation.updated_at;
+      operation.observed_state = this.#observedState(record);
+    }
+    const recordPath = this.#recordPath(record.worktree_name);
+    const temporaryPath = `${recordPath}.tmp-${process.pid}-${randomUUID()}`;
+    await writeFile(temporaryPath, `${JSON.stringify(record, null, 2)}\n`, "utf8");
+    await rename(temporaryPath, recordPath);
   }
 
   async #withLock(name, fn) {
