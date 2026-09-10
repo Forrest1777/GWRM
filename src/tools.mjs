@@ -19,6 +19,9 @@ export function buildTools() {
     tool("activate_worktree", "Marca uma worktree como ativa e aguarda Godot headless/LSP e Godot MCP dedicado ficarem prontos.", { worktree_name: worktree }, ["worktree_name"]),
     tool("deactivate_worktree", "Marca uma worktree como inativa e encerra seus servicos.", { worktree_name: worktree }, ["worktree_name"]),
     tool("get_worktree_status", "Mostra processos, portas e estado de uma worktree.", { worktree_name: worktree }, ["worktree_name"]),
+    tool("get_worktree_operation_status", "Consulta uma operacao persistente de lifecycle pelo operation_id.", {
+      operation_id: string("operation_id retornado por activate_worktree ou deactivate_worktree."),
+    }, ["operation_id"]),
     tool("run_gut_tests", "Inicia uma execucao GUT supervisionada por diretorio e retorna imediatamente operation_id. Consulte get_gut_run_status ate terminal=true.", {
       worktree_name: worktree,
       test_directory: string("Diretorio res:// dentro da raiz de testes permitida."),
@@ -180,6 +183,7 @@ export function buildToolHandler(config, sessionManager, gutRunner, computerUse)
     if (name === "activate_worktree") return await sessionManager.activateWorktree(args.worktree_name, "mcp");
     if (name === "deactivate_worktree") return await sessionManager.deactivateWorktree(args.worktree_name, "mcp");
     if (name === "get_worktree_status") return sessionManager.getStatus(args.worktree_name);
+    if (name === "get_worktree_operation_status") return sessionManager.getOperation(args.operation_id);
     if (name === "run_gut_tests") return gutRunner.startDirectory(args.worktree_name, args.test_directory);
     if (name === "run_gut_test_script") return gutRunner.startScript(args.worktree_name, args.test_script);
     if (name === "get_gut_run_status") return gutRunner.getOperation(args.operation_id);

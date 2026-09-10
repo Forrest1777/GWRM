@@ -84,13 +84,23 @@ test("MCP facade delegates to singleton supervisor", { timeout: 30000 }, async (
     const messages = [];
     rl.on("line", (line) => messages.push(JSON.parse(line)));
     facade.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "test", version: "1" } } })}\n`);
-    facade.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "gwrm_status", arguments: {} } })}\n`);
+    facade.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} })}\n`);
+    facade.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "gwrm_status", arguments: {} } })}\n`);
+    facade.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 4, method: "tools/call", params: { name: "get_worktree_operation_status", arguments: { operation_id: "lifecycle_missing" } } })}\n`);
     const deadline = Date.now() + 5000;
-    while (messages.length < 2 && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 50));
-    assert.equal(messages[0].result.serverInfo.name, "gwrm");
-    const payload = JSON.parse(messages[1].result.content[0].text);
+    while (messages.length < 4 && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 50));
+    const responses = new Map(messages.map((message) => [message.id, message]));
+    assert.equal(responses.get(1).result.serverInfo.name, "gwrm");
+    const operationTool = responses.get(2).result.tools.find((tool) => tool.name === "get_worktree_operation_status");
+    assert.deepEqual(operationTool.inputSchema.required, ["operation_id"]);
+    const payload = JSON.parse(responses.get(3).result.content[0].text);
     assert.equal(payload.ready, true);
     assert.equal(payload.service, "GWRM-test");
+    assert.deepEqual(JSON.parse(responses.get(4).result.content[0].text), {
+      operation_id: "lifecycle_missing",
+      status: "not_found",
+      terminal: true,
+    });
   } finally {
     rl?.close();
     if (facade?.stdin && !facade.stdin.destroyed) facade.stdin.end();

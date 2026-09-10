@@ -38,6 +38,10 @@ This covers the Windows failure observed when Cua returned:
 this session has ended; call start_session explicitly to reuse its label
 ```
 
+## Lifecycle operation status regression coverage
+
+`tests/mcp-facade-policy.test.mjs`, `tests/facade-supervisor.test.mjs` and `tests/control-api-lifecycle.test.mjs` verify the required `operation_id` MCP schema, its safe 60-second supervisor retry policy, authenticated Control API lookup on an isolated dynamic port, and identical deterministic `not_found` payloads.
+
 ## Startup reconciliation regression coverage
 
 Launcher readiness no longer uses a fixed 30-second supervisor budget.
