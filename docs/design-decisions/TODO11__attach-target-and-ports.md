@@ -9,7 +9,7 @@
 - **Status:** aprovado / persistido neste worktree; integracao pelo orquestrador
 - **Approved bundle:** `TODO11-P1`
 - **User decision:** dashboard no card `t_3f6ba1b1`: `D1=A D2=A D3=A D4=A` + dois adendos
-- **Decision commit:** pending (preenchido apos persist)
+- **Decision commit:** `404f4248b1b0749509ad650ccd32564b157a2ddc`
 
 ## Problem
 
