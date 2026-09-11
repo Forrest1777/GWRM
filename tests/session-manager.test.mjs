@@ -14,7 +14,9 @@ test("activate, route MCP, run GUT and deactivate isolated worktree", { timeout:
   const temp = await mkdtemp(path.join(os.tmpdir(), "gwrm-test-"));
   const worktrees = path.join(temp, "worktrees");
   const worktree = path.join(worktrees, "t_test");
+  const fakeAppData = path.join(temp, "APPDATA");
   await mkdir(path.join(worktree, "addons", "gut"), { recursive: true });
+  await mkdir(path.join(fakeAppData, "Godot"), { recursive: true });
   await writeFile(path.join(worktree, "project.godot"), "[application]\nconfig/name=\"test\"\n");
   await writeFile(path.join(worktree, "addons", "gut", "gut_cmdln.gd"), "# fake\n");
 
@@ -33,7 +35,11 @@ test("activate, route MCP, run GUT and deactivate isolated worktree", { timeout:
   };
   const logger = new Logger(config.paths.logsDirectory);
   await logger.init();
-  const sessions = new SessionManager(config, logger);
+  const sessions = new SessionManager(config, logger, {
+    godotAiAppdataDir: fakeAppData,
+    godotAiProcessLister: async () => [],
+    isPidAlive: () => false,
+  });
   await sessions.init();
   try {
     const missing = sessions.getStatus("t_missing");
@@ -112,8 +118,10 @@ test("migrate persisted state paths when worktree root changes", { timeout: 2000
   const worktrees = path.join(temp, "new-worktrees");
   const worktree = path.join(worktrees, "t_migrate");
   const stateDirectory = path.join(temp, "state");
+  const fakeAppData = path.join(temp, "APPDATA");
   await mkdir(path.join(worktree, "addons", "gut"), { recursive: true });
   await mkdir(stateDirectory, { recursive: true });
+  await mkdir(path.join(fakeAppData, "Godot"), { recursive: true });
   await writeFile(path.join(worktree, "project.godot"), "[application]\nconfig/name=\"test\"\n");
   await writeFile(path.join(worktree, "addons", "gut", "gut_cmdln.gd"), "# fake\n");
   await writeFile(path.join(stateDirectory, "t_migrate.json"), JSON.stringify({
@@ -147,7 +155,11 @@ test("migrate persisted state paths when worktree root changes", { timeout: 2000
   };
   const logger = new Logger(config.paths.logsDirectory);
   await logger.init();
-  const sessions = new SessionManager(config, logger);
+  const sessions = new SessionManager(config, logger, {
+    godotAiAppdataDir: fakeAppData,
+    godotAiProcessLister: async () => [],
+    isPidAlive: () => false,
+  });
   await sessions.init();
   try {
     const initial = sessions.getStatus("t_migrate");

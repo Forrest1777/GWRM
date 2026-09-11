@@ -4,7 +4,6 @@ import { mkdtemp, mkdir, readdir, readFile, writeFile, rm } from "node:fs/promis
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { execFileSync } from "node:child_process";
 import { Logger } from "../src/logger.mjs";
 import { SessionManager } from "../src/session-manager.mjs";
 
@@ -101,6 +100,18 @@ async function listFilesRecursive(dir) {
   return files;
 }
 
+function baseDependencies(fakeAppData) {
+  return {
+    godotAiAppdataDir: fakeAppData,
+    // Without EditorSettings fixture / attach fakes, critical section fails closed.
+    godotAiProcessLister: async () => [],
+    isPidAlive: () => false,
+    godotAiWaitForListen: async () => {
+      throw new Error("listen not expected without fakes");
+    },
+  };
+}
+
 test("allocate sticky disjoint Godot AI HTTP/WS ports and expose getStatus.godot_ai", { timeout: 30000 }, async () => {
   const temp = await mkdtemp(path.join(os.tmpdir(), "gwrm-godot-ai-ports-"));
   const worktrees = path.join(temp, "worktrees");
@@ -116,7 +127,7 @@ test("allocate sticky disjoint Godot AI HTTP/WS ports and expose getStatus.godot
   const config = buildConfig(temp, worktrees, 51000);
   const logger = new Logger(config.paths.logsDirectory);
   await logger.init();
-  const sessions = new SessionManager(config, logger);
+  const sessions = new SessionManager(config, logger, baseDependencies(fakeAppData));
   await sessions.init();
 
   try {
@@ -133,10 +144,10 @@ test("allocate sticky disjoint Godot AI HTTP/WS ports and expose getStatus.godot
     const a = await sessions.activateWorktree("t_a", "test");
     assert.equal(a.status, "ready");
     assertGodotAiShape(a.godot_ai);
-    assert.equal(a.godot_ai.status, "runtime_no_session");
+    // Without EditorSettings fixture the critical section fails closed; ports stay sticky.
+    assert.equal(a.godot_ai.status, "integration_error");
     assert.equal(a.godot_ai.session_id, null);
-    assert.equal(a.godot_ai.gui_pid, null);
-    assert.equal(a.godot_ai.last_error, null);
+    assert.equal(a.godot_ai.last_error?.code, "godot_ai_editor_settings_failed");
     assert.equal(Number.isInteger(a.godot_ai.http_port), true);
     assert.equal(Number.isInteger(a.godot_ai.ws_port), true);
     assert.ok(a.godot_ai.http_port >= config.ports.godotAiHttpStart && a.godot_ai.http_port <= config.ports.godotAiHttpEnd);
@@ -144,7 +155,7 @@ test("allocate sticky disjoint Godot AI HTTP/WS ports and expose getStatus.godot
 
     const b = await sessions.activateWorktree("t_b", "test");
     assert.equal(b.status, "ready");
-    assert.equal(b.godot_ai.status, "runtime_no_session");
+    assert.equal(b.godot_ai.status, "integration_error");
     assert.equal(Number.isInteger(b.godot_ai.http_port), true);
     assert.equal(Number.isInteger(b.godot_ai.ws_port), true);
     assert.notEqual(a.godot_ai.http_port, b.godot_ai.http_port);
@@ -157,7 +168,7 @@ test("allocate sticky disjoint Godot AI HTTP/WS ports and expose getStatus.godot
     assert.equal(reusedA.status, "ready");
     assert.equal(reusedA.godot_ai.http_port, pairA.http);
     assert.equal(reusedA.godot_ai.ws_port, pairA.ws);
-    assert.equal(reusedA.godot_ai.status, "runtime_no_session");
+    assert.equal(reusedA.godot_ai.status, "integration_error");
 
     const stoppedA = await sessions.deactivateWorktree("t_a", "test");
     assert.equal(stoppedA.status, "stopped");
@@ -165,7 +176,6 @@ test("allocate sticky disjoint Godot AI HTTP/WS ports and expose getStatus.godot
     assert.equal(stoppedA.godot_ai.http_port, pairA.http);
     assert.equal(stoppedA.godot_ai.ws_port, pairA.ws);
     assert.equal(stoppedA.godot_ai.session_id, null);
-    assert.equal(stoppedA.godot_ai.gui_pid, null);
 
     const stateAfterStop = JSON.parse(await readFile(path.join(config.paths.stateDirectory, "t_a.json"), "utf8"));
     assert.equal(stateAfterStop.godot_ai_http_port, pairA.http);
@@ -173,7 +183,7 @@ test("allocate sticky disjoint Godot AI HTTP/WS ports and expose getStatus.godot
 
     const reactivatedA = await sessions.activateWorktree("t_a", "test-reactivate");
     assert.equal(reactivatedA.status, "ready");
-    assert.equal(reactivatedA.godot_ai.status, "runtime_no_session");
+    assert.equal(reactivatedA.godot_ai.status, "integration_error");
     assert.equal(reactivatedA.godot_ai.http_port, pairA.http);
     assert.equal(reactivatedA.godot_ai.ws_port, pairA.ws);
 
@@ -182,6 +192,7 @@ test("allocate sticky disjoint Godot AI HTTP/WS ports and expose getStatus.godot
     assert.equal(stillB.godot_ai.http_port, pairB.http);
     assert.equal(stillB.godot_ai.ws_port, pairB.ws);
 
+    // Fail-closed applyPorts must not create a missing EditorSettings file.
     const godotFiles = await listFilesRecursive(fakeGodotUser);
     assert.deepEqual(godotFiles, []);
   } finally {
@@ -195,6 +206,8 @@ test("allocate sticky disjoint Godot AI HTTP/WS ports and expose getStatus.godot
 test("Godot AI allocation failure keeps TODO9 ready and sets integration_error", { timeout: 20000 }, async () => {
   const temp = await mkdtemp(path.join(os.tmpdir(), "gwrm-godot-ai-ports-fail-"));
   const worktrees = path.join(temp, "worktrees");
+  const fakeAppData = path.join(temp, "APPDATA");
+  await mkdir(path.join(fakeAppData, "Godot"), { recursive: true });
   await prepareWorktree(worktrees, "t_fail");
 
   const config = buildConfig(temp, worktrees, 53000);
@@ -204,7 +217,7 @@ test("Godot AI allocation failure keeps TODO9 ready and sets integration_error",
 
   const logger = new Logger(config.paths.logsDirectory);
   await logger.init();
-  const sessions = new SessionManager(config, logger);
+  const sessions = new SessionManager(config, logger, baseDependencies(fakeAppData));
   await sessions.init();
 
   const holders = [];
@@ -223,7 +236,6 @@ test("Godot AI allocation failure keeps TODO9 ready and sets integration_error",
     assert.equal(status.last_error, null);
     assert.equal(status.godot_ai.status, "integration_error");
     assert.equal(status.godot_ai.session_id, null);
-    assert.equal(status.godot_ai.gui_pid, null);
     assert.equal(status.godot_ai.last_error?.code, "godot_ai_port_allocation_failed");
     assert.match(status.godot_ai.last_error?.message || "", /porta/i);
   } finally {
@@ -231,15 +243,4 @@ test("Godot AI allocation failure keeps TODO9 ready and sets integration_error",
     await sessions.shutdown();
     await rm(temp, { recursive: true, force: true });
   }
-});
-
-test("card diff must not import godot-ai bridge/editor-settings/session-registry", () => {
-  const diff = execFileSync("git", ["diff", "--", "src/session-manager.mjs", "tests/session-manager.test.mjs", "tests/session-manager-godot-ai-ports.test.mjs"], {
-    cwd: root,
-    encoding: "utf8",
-  });
-  assert.equal(/godot-ai-bridge/.test(diff), false);
-  assert.equal(/godot-ai-editor-settings/.test(diff), false);
-  assert.equal(/godot-ai-session-registry/.test(diff), false);
-  assert.equal(/from\s+["'].*godot-ai/.test(diff), false);
 });

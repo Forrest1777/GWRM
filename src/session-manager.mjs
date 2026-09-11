@@ -13,9 +13,63 @@ import {
 } from "./process-utils.mjs";
 import { StdioMcpClient } from "./stdio-mcp-client.mjs";
 import { startTcpRelay } from "./tcp-relay.mjs";
+import { GodotAiBridge } from "./godot-ai-bridge.mjs";
+import { GodotAiSessionRegistry, GODOT_AI_SESSION_CONFLICT } from "./godot-ai-session-registry.mjs";
+import { GodotAiEditorSettings } from "./godot-ai-editor-settings.mjs";
 
 function now() { return new Date().toISOString(); }
 function cloneState(state) { return JSON.parse(JSON.stringify(state)); }
+
+function tryParseJsonText(text) {
+  if (typeof text !== "string") return null;
+  const trimmed = text.trim();
+  if (!trimmed) return null;
+  const candidates = [trimmed];
+  const objectIndex = trimmed.indexOf("{");
+  const arrayIndex = trimmed.indexOf("[");
+  const start = [objectIndex, arrayIndex].filter((index) => index >= 0).sort((a, b) => a - b)[0];
+  if (Number.isInteger(start) && start > 0) candidates.push(trimmed.slice(start));
+  for (const candidate of candidates) {
+    try {
+      return JSON.parse(candidate);
+    } catch {
+      // continue
+    }
+  }
+  return null;
+}
+
+function extractStructuredPayload(result) {
+  if (!result || typeof result !== "object") return null;
+  if (result.structuredContent && typeof result.structuredContent === "object") return result.structuredContent;
+  if (result.structured_content && typeof result.structured_content === "object") return result.structured_content;
+  for (const block of result.content || []) {
+    if (block?.type !== "text") continue;
+    const parsed = tryParseJsonText(block.text);
+    if (parsed !== null && typeof parsed === "object") return parsed;
+  }
+  return null;
+}
+
+function extractLaunchEditorPid(result) {
+  const candidates = [];
+  const structured = extractStructuredPayload(result);
+  if (structured) candidates.push(structured);
+  if (result && typeof result === "object") candidates.push(result);
+  for (const candidate of candidates) {
+    for (const key of ["pid", "editor_pid", "ProcessId"]) {
+      const value = Number(candidate?.[key]);
+      if (Number.isInteger(value) && value > 0) return value;
+    }
+  }
+  return null;
+}
+
+function godotAiFailure(code, message) {
+  const error = new Error(typeof message === "string" ? message : String(message?.message || message || code));
+  error.code = code;
+  return error;
+}
 
 async function closeWriteStream(stream, timeoutMs = 3000) {
   if (!stream || stream.closed || stream.destroyed) return;
@@ -37,13 +91,19 @@ async function waitForChildProcessClose(child, timeoutMs = 5000) {
 }
 
 export class SessionManager {
-  constructor(config, logger) {
+  constructor(config, logger, dependencies = {}) {
     this.config = config;
     this.logger = logger;
+    this.dependencies = dependencies && typeof dependencies === "object" ? dependencies : {};
     this.records = new Map();
     this.runtime = new Map();
     this.locks = new Map();
+    this.godotAiGlobalLock = null;
     this.reconcileTimer = null;
+    this.godotAiRegistry = this.dependencies.godotAiSessionRegistry || new GodotAiSessionRegistry();
+    this.isPidAliveFn = typeof this.dependencies.isPidAlive === "function"
+      ? this.dependencies.isPidAlive
+      : isPidAlive;
   }
 
   async init() {
@@ -100,6 +160,13 @@ export class SessionManager {
       await this.#persist(record);
       await this.#ensureRunning(record);
       if (record.status === "ready") await this.#ensureGodotAiPorts(record);
+      if (
+        record.status === "ready"
+        && Number.isInteger(record.godot_ai_http_port)
+        && Number.isInteger(record.godot_ai_ws_port)
+      ) {
+        await this.#ensureGodotAiCriticalSection(record);
+      }
       const status = this.getStatus(name);
       return {
         ...status,
@@ -360,7 +427,28 @@ export class SessionManager {
         session_id: null,
         http_port: httpPort,
         ws_port: wsPort,
-        gui_pid: null,
+        gui_pid: record.godot_ai_gui_pid,
+        last_error: record.godot_ai_last_error,
+      };
+    }
+    const registryUsable = this.godotAiRegistry?.usable?.(record.worktree_name) === true;
+    if (registryUsable || record.godot_ai_status === "session_ready") {
+      return {
+        status: "session_ready",
+        session_id: record.godot_ai_session_id,
+        http_port: httpPort,
+        ws_port: wsPort,
+        gui_pid: record.godot_ai_gui_pid,
+        last_error: null,
+      };
+    }
+    if (record.godot_ai_status === "session_invalid") {
+      return {
+        status: "session_invalid",
+        session_id: record.godot_ai_session_id,
+        http_port: httpPort,
+        ws_port: wsPort,
+        gui_pid: record.godot_ai_gui_pid,
         last_error: record.godot_ai_last_error,
       };
     }
@@ -381,11 +469,7 @@ export class SessionManager {
     const host = this.config.godot.localReadyHost;
     const stickyPair = Number.isInteger(record.godot_ai_http_port) && Number.isInteger(record.godot_ai_ws_port);
     if (stickyPair) {
-      if (record.godot_ai_status !== "runtime_no_session" || record.godot_ai_last_error !== null) {
-        record.godot_ai_status = "runtime_no_session";
-        record.godot_ai_last_error = null;
-        await this.#persist(record);
-      }
+      // Sticky pair already exists: do not reset status/session_id/gui_pid/last_error.
       return;
     }
 
@@ -433,6 +517,265 @@ export class SessionManager {
         error: error.message,
       });
     }
+  }
+
+  async #ensureGodotAiCriticalSection(record) {
+    return await this.#withGodotAiGlobalLock(async () => {
+      try {
+        await this.#runGodotAiCriticalSection(record);
+      } catch (error) {
+        const code = typeof error?.code === "string" && error.code
+          ? error.code
+          : "godot_ai_attach_failed";
+        record.godot_ai_status = "integration_error";
+        record.godot_ai_last_error = {
+          code,
+          message: error?.message || String(error),
+        };
+        // Keep sticky HTTP/WS ports. gui_pid may remain if a GUI was observed.
+        await this.#persist(record);
+        await this.logger.warn("Falha na secao critica Godot AI; runtime TODO9 permanece ready.", {
+          worktree: record.worktree_name,
+          code,
+          error: error?.message || String(error),
+        });
+      }
+    });
+  }
+
+  async #runGodotAiCriticalSection(record) {
+    this.#normalizeGodotAiFields(record);
+    const httpPort = record.godot_ai_http_port;
+    const wsPort = record.godot_ai_ws_port;
+    if (!Number.isInteger(httpPort) || !Number.isInteger(wsPort)) {
+      throw godotAiFailure("godot_ai_port_allocation_failed", "HTTP/WS Godot AI ports are not allocated.");
+    }
+
+    const persistedGuiPid = record.godot_ai_gui_pid;
+    const healthyPersisted = await this.#isHealthyGodotAiGui(record, persistedGuiPid);
+    if (this.godotAiRegistry.usable(record.worktree_name) && healthyPersisted) {
+      // Idempotent activate: skip launch/attach/rebind when session is usable and GUI healthy.
+      if (record.godot_ai_status !== "session_ready" || record.godot_ai_last_error !== null) {
+        record.godot_ai_status = "session_ready";
+        record.godot_ai_last_error = null;
+        await this.#persist(record);
+      }
+      return;
+    }
+
+    // 1) EditorSettings write (before wait-listen; no further mutation after listen starts).
+    const appdataDir = this.dependencies.godotAiAppdataDir || process.env.APPDATA;
+    const settingsPath = GodotAiEditorSettings.resolveDefaultPath({ appdataDir });
+    const applied = await GodotAiEditorSettings.applyPorts({
+      settingsPath,
+      httpPort,
+      wsPort,
+    });
+    if (!applied?.ok) {
+      throw godotAiFailure(
+        "godot_ai_editor_settings_failed",
+        applied?.message || "Failed to apply Godot AI EditorSettings ports.",
+      );
+    }
+
+    // 2) Launch or reuse GUI.
+    let guiPid = await this.#resolveGodotAiGuiPid(record);
+
+    // 3) Wait listen on HTTP only.
+    const timeoutMs = this.config.sessions.readyTimeoutSeconds * 1000;
+    const waitListen = typeof this.dependencies.godotAiWaitForListen === "function"
+      ? this.dependencies.godotAiWaitForListen
+      : waitForPort;
+    try {
+      await waitListen(this.config.godot.localReadyHost, httpPort, timeoutMs);
+    } catch (error) {
+      throw godotAiFailure("godot_ai_listen_timeout", error?.message || error);
+    }
+
+    // 4) Attach via per-worktree bridge.
+    const bridge = this.#getOrCreateGodotAiBridge(record.worktree_name);
+    const attachOptions = {
+      httpPort,
+      wsPort,
+      logger: this.logger,
+      label: record.worktree_name,
+    };
+    if (typeof this.dependencies.godotAiAttachOptions === "function") {
+      Object.assign(attachOptions, this.dependencies.godotAiAttachOptions({ httpPort, wsPort }) || {});
+    }
+    const attached = await bridge.attach(attachOptions);
+    if (!attached?.ok) {
+      throw godotAiFailure(
+        "godot_ai_attach_failed",
+        attached?.message || "Godot AI attach failed.",
+      );
+    }
+
+    // 5) Deterministic session selection (never session_activate; never sessions[0] by order).
+    const sessionId = this.#selectGodotAiSessionId(attached.sessions, guiPid);
+
+    // 6) Registry bind.
+    try {
+      this.godotAiRegistry.bind({
+        worktree_name: record.worktree_name,
+        session_id: sessionId,
+        runtime_pid: guiPid,
+        http_port: httpPort,
+        ws_port: wsPort,
+        observed_state: "session_ready",
+      });
+    } catch (error) {
+      if (error?.code === GODOT_AI_SESSION_CONFLICT) {
+        throw godotAiFailure("godot_ai_registry_conflict", error.message);
+      }
+      throw godotAiFailure("godot_ai_registry_conflict", error?.message || error);
+    }
+
+    record.godot_ai_session_id = sessionId;
+    record.godot_ai_gui_pid = Number.isInteger(guiPid) ? guiPid : record.godot_ai_gui_pid;
+    record.godot_ai_status = "session_ready";
+    record.godot_ai_last_error = null;
+    await this.#persist(record);
+  }
+
+  #getOrCreateGodotAiBridge(worktreeName) {
+    let runtime = this.runtime.get(worktreeName);
+    if (!runtime) {
+      runtime = { godot: null, stdout: null, stderr: null, mcp: null, relay: null, projectStarted: false, godotAiBridge: null };
+      this.runtime.set(worktreeName, runtime);
+    }
+    if (!runtime.godotAiBridge) {
+      runtime.godotAiBridge = typeof this.dependencies.godotAiBridgeFactory === "function"
+        ? this.dependencies.godotAiBridgeFactory({ worktree_name: worktreeName })
+        : new GodotAiBridge();
+    }
+    return runtime.godotAiBridge;
+  }
+
+  async #resolveGodotAiGuiPid(record) {
+    const healthy = await this.#listHealthyGodotAiGuis(record);
+    if (healthy.length === 1) {
+      record.godot_ai_gui_pid = healthy[0].pid;
+      await this.#persist(record);
+      return healthy[0].pid;
+    }
+    if (healthy.length > 1) {
+      const preferred = Number.isInteger(record.godot_ai_gui_pid)
+        ? healthy.find((item) => item.pid === record.godot_ai_gui_pid)
+        : null;
+      if (preferred) {
+        return preferred.pid;
+      }
+      throw godotAiFailure(
+        "godot_ai_launch_editor_failed",
+        `Multiple healthy Godot AI GUI candidates for worktree '${record.worktree_name}'.`,
+      );
+    }
+
+    // No healthy GUI: launch_editor via dedicated Godot MCP.
+    const runtime = this.runtime.get(record.worktree_name);
+    if (!runtime?.mcp?.isAlive) {
+      throw godotAiFailure("godot_ai_launch_editor_failed", "Dedicated Godot MCP is not ready for launch_editor.");
+    }
+    if (!runtime.mcp.hasTool("launch_editor")) {
+      throw godotAiFailure("godot_ai_launch_editor_failed", "Dedicated Godot MCP does not advertise launch_editor.");
+    }
+
+    let launchResult;
+    try {
+      const args = this.#mapGodotArguments("launch_editor", {}, record.host_project_path);
+      launchResult = await runtime.mcp.callTool("launch_editor", args);
+    } catch (error) {
+      throw godotAiFailure("godot_ai_launch_editor_failed", error?.message || error);
+    }
+
+    let guiPid = extractLaunchEditorPid(launchResult);
+    if (!Number.isInteger(guiPid)) {
+      const afterLaunch = await this.#listHealthyGodotAiGuis(record);
+      if (afterLaunch.length === 1) guiPid = afterLaunch[0].pid;
+      else if (afterLaunch.length > 1) {
+        throw godotAiFailure(
+          "godot_ai_launch_editor_failed",
+          `Multiple GUI candidates after launch_editor for worktree '${record.worktree_name}'.`,
+        );
+      }
+    }
+    if (!Number.isInteger(guiPid)) {
+      throw godotAiFailure("godot_ai_launch_editor_failed", "launch_editor did not yield an observable GUI pid.");
+    }
+
+    record.godot_ai_gui_pid = guiPid;
+    await this.#persist(record);
+    return guiPid;
+  }
+
+  async #listHealthyGodotAiGuis(record) {
+    const lister = typeof this.dependencies.godotAiProcessLister === "function"
+      ? this.dependencies.godotAiProcessLister
+      : (pathFragment, config) => listWindowsProcessesReferencingPath(pathFragment, config);
+    const processes = await lister(record.host_project_path, this.config);
+    const rows = Array.isArray(processes) ? processes : [];
+    const healthy = [];
+    for (const row of rows) {
+      const pid = Number(row?.pid);
+      if (!Number.isInteger(pid) || pid <= 0) continue;
+      if (!(await this.#isHealthyGodotAiGui(record, pid, row))) continue;
+      healthy.push({
+        pid,
+        command_line: String(row?.command_line || ""),
+        name: String(row?.name || ""),
+      });
+    }
+    return healthy;
+  }
+
+  async #isHealthyGodotAiGui(record, pid, processInfo = null) {
+    if (!Number.isInteger(pid) || pid <= 0) return false;
+    if (pid === record.godot_pid) return false;
+    if (!this.isPidAliveFn(pid)) return false;
+
+    let commandLine = typeof processInfo?.command_line === "string" ? processInfo.command_line : null;
+    if (commandLine == null) {
+      const lister = typeof this.dependencies.godotAiProcessLister === "function"
+        ? this.dependencies.godotAiProcessLister
+        : (pathFragment, config) => listWindowsProcessesReferencingPath(pathFragment, config);
+      const processes = await lister(record.host_project_path, this.config);
+      const match = (Array.isArray(processes) ? processes : []).find((row) => Number(row?.pid) === pid);
+      commandLine = typeof match?.command_line === "string" ? match.command_line : "";
+    }
+    if (!commandLine) return false;
+    const pathNeedle = String(record.host_project_path || "");
+    if (!pathNeedle || !commandLine.toLowerCase().includes(pathNeedle.toLowerCase())) return false;
+    if (commandLine.includes("--headless")) return false;
+    return true;
+  }
+
+  #selectGodotAiSessionId(sessions, guiPid) {
+    const list = Array.isArray(sessions) ? sessions : [];
+    const withId = list.filter((session) => typeof session?.session_id === "string" && session.session_id.trim() !== "");
+
+    if (Number.isInteger(guiPid) && guiPid > 0) {
+      const matched = withId.filter((session) => {
+        const candidate = session.editor_pid ?? session.pid ?? session.runtime_pid;
+        return Number(candidate) === guiPid;
+      });
+      if (matched.length === 1) return matched[0].session_id;
+      if (matched.length > 1) {
+        throw godotAiFailure(
+          "godot_ai_session_ambiguous",
+          `Multiple Godot AI sessions matched gui_pid=${guiPid}.`,
+        );
+      }
+    }
+
+    if (withId.length === 1) return withId[0].session_id;
+    if (withId.length === 0) {
+      throw godotAiFailure("godot_ai_no_session", "Godot AI attach returned no usable session_id.");
+    }
+    throw godotAiFailure(
+      "godot_ai_session_ambiguous",
+      `Godot AI attach returned ${withId.length} sessions without a unique editor_pid match.`,
+    );
   }
 
   async #ensureRunning(record) {
@@ -503,7 +846,7 @@ export class SessionManager {
     godot.stdout.pipe(stdout);
     godot.stderr.pipe(stderr);
     record.godot_pid = godot.pid;
-    this.runtime.set(record.worktree_name, { godot, stdout, stderr, mcp: null, relay: null, projectStarted: false });
+    this.runtime.set(record.worktree_name, { godot, stdout, stderr, mcp: null, relay: null, projectStarted: false, godotAiBridge: null });
     godot.once("close", (code, signal) => {
       this.#onGodotExit(record.worktree_name, code, signal).catch((error) => {
         this.logger.error("Falha tratando encerramento do Godot.", {
@@ -612,6 +955,11 @@ export class SessionManager {
         await terminateProcessTree(mcpPid, this.config, this.logger, "godot-mcp");
       }
       if (runtime?.mcp) await runtime.mcp.close();
+
+      if (runtime?.godotAiBridge) {
+        await runtime.godotAiBridge.disconnect().catch(() => {});
+        runtime.godotAiBridge = null;
+      }
 
       if (godotPid && isPidAlive(godotPid)) {
         await terminateProcessTree(godotPid, this.config, this.logger, record.host_project_path);
@@ -732,6 +1080,20 @@ export class SessionManager {
     finally {
       release();
       if (this.locks.get(name) === queued) this.locks.delete(name);
+    }
+  }
+
+  async #withGodotAiGlobalLock(fn) {
+    const previous = this.godotAiGlobalLock || Promise.resolve();
+    let release;
+    const current = new Promise((resolve) => { release = resolve; });
+    const queued = previous.then(() => current);
+    this.godotAiGlobalLock = queued;
+    await previous;
+    try { return await fn(); }
+    finally {
+      release();
+      if (this.godotAiGlobalLock === queued) this.godotAiGlobalLock = null;
     }
   }
 }
