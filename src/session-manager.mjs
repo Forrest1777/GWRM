@@ -208,6 +208,9 @@ export class SessionManager {
       record.last_requested_at = now();
       record.last_request_source = source;
       await this.#persist(record);
+      // Godot AI release happens before TODO9 #stopRuntime (including delayed shutdown).
+      // Do not enter the Godot AI critical section from deactivate.
+      await this.#releaseGodotAiAssociation(record);
       if (shutdownDelay === 0) await this.#stopRuntime(record, "deactivated");
       return { ...this.getStatus(name), already_inactive: false };
     });
@@ -320,6 +323,14 @@ export class SessionManager {
         if (record.desired_active) {
           if (record.status !== "failed" || this.config.sessions.restartActiveSessionsAfterCrash) await this.#ensureRunning(record);
           if (record.desired_active && record.status === "ready") await this.#ensureGodotAiPorts(record);
+          if (
+            record.desired_active
+            && record.status === "ready"
+            && Number.isInteger(record.godot_ai_http_port)
+            && Number.isInteger(record.godot_ai_ws_port)
+          ) {
+            await this.#reconcileGodotAiSession(record);
+          }
         } else if (this.runtime.has(name)) {
           const due = !record.shutdown_not_before || Date.now() >= Date.parse(record.shutdown_not_before);
           if (due) await this.#stopRuntime(record, `reconcile_${reason}`);
@@ -411,6 +422,7 @@ export class SessionManager {
     this.#normalizeGodotAiFields(record);
     const httpPort = record.godot_ai_http_port;
     const wsPort = record.godot_ai_ws_port;
+    // Persisted session_id is an invalidatable cache; routing only consumes session_ready.
     if (record.status !== "ready") {
       return {
         status: "runtime_stopped",
@@ -432,7 +444,8 @@ export class SessionManager {
       };
     }
     const registryUsable = this.godotAiRegistry?.usable?.(record.worktree_name) === true;
-    if (registryUsable || record.godot_ai_status === "session_ready") {
+    // session_ready only when the in-process registry still marks the association usable.
+    if (registryUsable) {
       return {
         status: "session_ready",
         session_id: record.godot_ai_session_id,
@@ -442,10 +455,13 @@ export class SessionManager {
         last_error: null,
       };
     }
-    if (record.godot_ai_status === "session_invalid") {
+    const diagnosticSessionId = typeof record.godot_ai_session_id === "string" && record.godot_ai_session_id
+      ? record.godot_ai_session_id
+      : null;
+    if (diagnosticSessionId || record.godot_ai_status === "session_invalid") {
       return {
         status: "session_invalid",
-        session_id: record.godot_ai_session_id,
+        session_id: diagnosticSessionId,
         http_port: httpPort,
         ws_port: wsPort,
         gui_pid: record.godot_ai_gui_pid,
@@ -460,6 +476,75 @@ export class SessionManager {
       gui_pid: null,
       last_error: null,
     };
+  }
+
+  async #releaseGodotAiAssociation(record) {
+    if (!record) return;
+    this.#normalizeGodotAiFields(record);
+    const worktreeName = record.worktree_name;
+    try {
+      this.godotAiRegistry?.release?.(worktreeName);
+    } catch {
+      // Release is best-effort; stop path must still proceed.
+    }
+    if (typeof this.dependencies.onGodotAiRelease === "function") {
+      try {
+        this.dependencies.onGodotAiRelease({
+          worktree_name: worktreeName,
+          record_status: record.status,
+          has_runtime: this.runtime.has(worktreeName),
+        });
+      } catch {
+        // Test/order hooks must never block release/stop.
+      }
+    }
+    // Clean release: association not usable; sticky HTTP/WS ports remain.
+    record.godot_ai_status = "runtime_no_session";
+    record.godot_ai_last_error = null;
+    record.godot_ai_session_id = null;
+    record.godot_ai_gui_pid = null;
+    await this.#persist(record);
+  }
+
+  async #reconcileGodotAiSession(record) {
+    this.#normalizeGodotAiFields(record);
+    if (
+      record.status !== "ready"
+      || !Number.isInteger(record.godot_ai_http_port)
+      || !Number.isInteger(record.godot_ai_ws_port)
+    ) {
+      return;
+    }
+
+    const usable = this.godotAiRegistry?.usable?.(record.worktree_name) === true;
+    const healthyGui = await this.#isHealthyGodotAiGui(record, record.godot_ai_gui_pid);
+    if (usable && healthyGui) {
+      // Keep session_ready. Do not launch_editor, attach, or rebind.
+      if (record.godot_ai_status !== "session_ready" || record.godot_ai_last_error !== null) {
+        record.godot_ai_status = "session_ready";
+        record.godot_ai_last_error = null;
+        await this.#persist(record);
+      }
+      return;
+    }
+
+    // Observed revalidation failed: mark invalid until reconvergence.
+    try {
+      this.godotAiRegistry?.markInvalid?.(record.worktree_name, {
+        code: "SESSION_REVALIDATE_FAILED",
+        message: "Godot AI session is not usable or GUI is unhealthy; reconverging.",
+      });
+    } catch {
+      // No registry entry is fine (e.g. process restart with empty registry).
+    }
+
+    if (record.godot_ai_status !== "integration_error") {
+      record.godot_ai_status = "session_invalid";
+      await this.#persist(record);
+    }
+
+    // Reuse activate critical section (reapplies sticky EditorSettings ports, then launch/reuse/attach/bind).
+    await this.#ensureGodotAiCriticalSection(record);
   }
 
   async #ensureGodotAiPorts(record) {
@@ -917,6 +1002,10 @@ export class SessionManager {
   }
 
   async #stopRuntime(record, reason) {
+    // Always release Godot AI association before tearing down TODO9 runtime.
+    // Idempotent when deactivate already released (including delayed shutdown).
+    await this.#releaseGodotAiAssociation(record);
+
     const runtime = this.runtime.get(record.worktree_name);
     record.status = "stopping";
     record.last_error = null;
