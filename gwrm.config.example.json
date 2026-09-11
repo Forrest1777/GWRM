@@ -28,7 +28,11 @@
     "lsp_proxy_start": 7100,
     "lsp_proxy_end": 7199,
     "dap_start": 6200,
-    "dap_end": 6299
+    "dap_end": 6299,
+    "godot_ai_http_start": 18000,
+    "godot_ai_http_end": 18099,
+    "godot_ai_ws_start": 19500,
+    "godot_ai_ws_end": 19599
   },
   "sessions": {
     "ready_timeout_seconds": 180,
