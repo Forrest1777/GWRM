@@ -5,3 +5,4 @@ state/*
 !state/.gitkeep
 gwrm.config.json
 *.local.json
+.worktrees
