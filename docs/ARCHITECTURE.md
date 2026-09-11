@@ -11,12 +11,16 @@ GWRM no Windows
   ├─ reconciliador de estado desejado/real
   ├─ supervisor singleton independente das sessoes HTTP MCP
   ├─ facade MCP leve criado pelo mcp-proxy
-  ├─ uma instancia Godot headless persistente por worktree ativa
+  ├─ uma instancia Godot headless persistente por worktree ativa (TODO9)
   │    ├─ --headless --editor --path <WORKTREE>
   │    ├─ porta LSP interna exclusiva e relay TCP externo exclusivo
   │    ├─ porta DAP exclusiva para evitar conflito
   │    └─ cache .godot e class_name da propria worktree
   ├─ um Godot MCP stdio dedicado por worktree ativa
+  │    └─ launch_editor: GUI editor (alvo de attach Godot AI; nao e launcher grafico proprio do GWRM)
+  ├─ Godot AI (camada aditiva ao TODO9; contrato em docs/GODOT_AI.md)
+  │    ├─ GodotAiBridge (attach/call com session_id explicito)
+  │    └─ GodotAiSessionRegistry (worktree -> GUI/runtime -> session_id)
   ├─ processos GUT pontuais no projeto da worktree
   ├─ ComputerUseService singleton
   │    └─ cua-driver mcp (stdio, lifecycle pertencente ao GWRM)
@@ -26,6 +30,8 @@ GWRM no Windows
 ## Estado desejado
 
 O worker altera somente `desired_active` pelas tools `activate_worktree` e `deactivate_worktree`. O GWRM executa imediatamente a reconciliacao. A rotina periodica corrige crashes, processos ausentes e worktrees removidas.
+
+`desired_active` e o campo publico `status` de `get_worktree_status` continuam sendo a autoridade do runtime persistente TODO9 (headless + LSP/DAP + Godot MCP). O objeto aninhado `get_worktree_status.godot_ai` e independente desse `status`; ver `docs/GODOT_AI.md` (nao duplicar a tabela de valores aqui).
 
 ## Persistencia
 
@@ -49,9 +55,13 @@ No shutdown global, o supervisor tambem encerra o `ComputerUseService`; o `cua-d
 
 `activate_worktree` reutiliza o runtime saudavel existente; `deactivate_worktree` retorna imediatamente quando a worktree ja esta totalmente parada; `get_worktree_status` representa worktrees desconhecidas como `not_registered` em vez de erro; e `stop_project` nao ativa uma worktree para para-la e nao encaminha `stop_project` ao Godot MCP quando nenhum `run_project` foi iniciado pelo runtime dedicado.
 
+## Godot AI
+
+Godot AI e uma camada aditiva sobre o runtime TODO9: nao substitui o headless persistente, o Godot MCP, o LSP nem o Computer Use. O attach reutiliza a GUI obtida por `launch_editor` do Godot MCP dedicado; o GWRM nao possui um segundo launcher grafico. Contrato de attach, portas HTTP/WS, secao critica, registry e `godot_ai.status`: `docs/GODOT_AI.md`.
+
 ## Computer Use
 
-O GWRM nao abre uma segunda instancia grafica para testes. `run_project` e `launch_editor` continuam pertencendo ao Godot MCP dedicado da worktree. O ComputerUseService apenas descobre e interage com as janelas resultantes.
+O GWRM nao abre uma segunda instancia grafica para testes. `run_project` e `launch_editor` continuam pertencendo ao Godot MCP dedicado da worktree. O attach Godot AI reutiliza essa mesma GUI; o ComputerUseService apenas descobre e interage com as janelas resultantes.
 
 O acesso GUI e worktree-bound. Para cada chamada, o GWRM localiza processos cuja command line referencia o path Windows da worktree, aceita apenas processos Godot graficos, exclui o Godot persistente `--headless` e cruza os PIDs autorizados com as janelas reportadas pelo Cua Driver. Um `window_id` fora desse conjunto e recusado.
 

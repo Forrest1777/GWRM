@@ -60,7 +60,7 @@ Attach preguicoso na primeira chamada Godot AI nao satisfaz o lifecycle do TODO1
 
 O GWRM aloca um par HTTP/WS exclusivo por worktree com o mesmo padrao de `allocatePort` + conjunto reservado ja usado para LSP/DAP. O attach usa exatamente esse par (`--port` / `--ws-port`). Duas worktrees ativas nao compartilham o par.
 
-Faixas planejadas para `gwrm.config` (implementacao futura; este card nao muta o exemplo de config):
+Faixas em `gwrm.config.example.json` e `gwrm.config_DEFAULT.json` (`godot_ai_http_start`/`godot_ai_http_end`, `godot_ai_ws_start`/`godot_ai_ws_end`):
 
 - HTTP: 18000-18099 (100 portas);
 - WS: 19500-19599 (100 portas).
