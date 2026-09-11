@@ -1,0 +1,6 @@
+[gd_resource type="EditorSettings" format=3]
+
+[resource]
+interface/editor/single_window_mode = true
+network/connection/network_mode = 1
+docks/filesystem/thumbnail_size = 64
