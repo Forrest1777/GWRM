@@ -105,7 +105,7 @@ export class SessionManager {
           await this.#persist(record);
         }
         await this.#ensureRunning(record);
-        if (!operation.terminal) {
+        if (!operation.terminal && record.status === "ready") {
           this.#transitionOperation(record, operation, "completed");
           await this.#persist(record);
         }
@@ -150,6 +150,10 @@ export class SessionManager {
         && record.directory_released
         && (!record.residual_pids || record.residual_pids.length === 0)
       ) {
+        if (!operation.terminal) {
+          this.#transitionOperation(record, operation, "completed");
+          await this.#persist(record);
+        }
         return {
           ...this.getStatus(name),
           operation_id: operation.operation_id,
@@ -310,7 +314,7 @@ export class SessionManager {
               await this.#persist(record);
             }
             if (record.status !== "failed" || this.config.sessions.restartActiveSessionsAfterCrash) await this.#ensureRunning(record);
-            if (operation && !operation.terminal) {
+            if (operation && !operation.terminal && record.status === "ready") {
               this.#transitionOperation(record, operation, "completed");
               await this.#persist(record);
             }
@@ -408,7 +412,7 @@ export class SessionManager {
 
   #requestOperation(record, desiredActive) {
     const current = this.#currentOperation(record);
-    if (current?.desired_active === desiredActive) return current;
+    if (current?.desired_active === desiredActive && (current.status === "completed" || !current.terminal)) return current;
 
     if (current && !current.terminal) this.#transitionOperation(record, current, "superseded");
     const generation = Math.max(0, ...(record.operations || []).map((item) => Number(item.generation) || 0)) + 1;

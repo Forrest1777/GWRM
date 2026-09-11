@@ -246,3 +246,140 @@ test("opposite desired state supersedes a persisted non-terminal generation", { 
     await rm(harness.temp, { recursive: true, force: true });
   }
 });
+
+test("waiting capacity keeps activation non-terminal until reconcile observes ready", { timeout: 30000 }, async () => {
+  const harness = await createHarness("gwrm-lifecycle-capacity-", 48000);
+  harness.config.service.maxActiveWorktrees = 0;
+  const sessions = new SessionManager(harness.config, harness.logger);
+  await sessions.init();
+  try {
+    const waiting = await sessions.activateWorktree("t_lifecycle", "capacity-limited");
+    assert.equal(waiting.status, "waiting_capacity");
+
+    const pending = sessions.getOperation(waiting.operation_id);
+    assert.equal(pending.status, "running");
+    assert.equal(pending.terminal, false);
+
+    harness.config.service.maxActiveWorktrees = 2;
+    await sessions.reconcileAll("capacity-available");
+
+    const completed = sessions.getOperation(waiting.operation_id);
+    assert.equal(sessions.getStatus("t_lifecycle").status, "ready");
+    assert.equal(completed.status, "completed");
+    assert.equal(completed.terminal, true);
+  } finally {
+    await sessions.shutdown();
+    await rm(harness.temp, { recursive: true, force: true });
+  }
+});
+
+test("retrying a failed activation creates a durable replacement generation", { timeout: 30000 }, async () => {
+  const harness = await createHarness("gwrm-lifecycle-failed-retry-", 49000);
+  const requestedAt = new Date().toISOString();
+  await mkdir(harness.stateDirectory, { recursive: true });
+  await writeFile(path.join(harness.stateDirectory, "t_lifecycle.json"), JSON.stringify({
+    schema_version: 2,
+    worktree_name: "t_lifecycle",
+    container_project_path: "/workspace/lifecycle-tests/.worktrees/t_lifecycle",
+    host_project_path: harness.worktree,
+    desired_active: true,
+    status: "failed",
+    lsp_port: null,
+    godot_lsp_port: null,
+    dap_port: null,
+    godot_pid: null,
+    godot_mcp_pid: null,
+    residual_pids: [],
+    directory_released: false,
+    created_at: requestedAt,
+    updated_at: requestedAt,
+    operations: [{
+      operation_id: "lifecycle_failed_activation",
+      worktree_name: "t_lifecycle",
+      generation: 4,
+      action: "activate",
+      desired_active: true,
+      status: "failed",
+      terminal: true,
+      requested_at: requestedAt,
+      updated_at: requestedAt,
+      completed_at: requestedAt,
+      error: "startup failed",
+      observed_state: { status: "failed", runtime: { active: false }, residual_pids: [], directory_released: false },
+    }],
+    current_operation_id: "lifecycle_failed_activation",
+  }, null, 2));
+
+  const sessions = new SessionManager(harness.config, harness.logger);
+  sessions.reconcileAll = async () => {};
+  await sessions.init();
+  try {
+    const retry = await sessions.activateWorktree("t_lifecycle", "retry-after-failure");
+    assert.notEqual(retry.operation_id, "lifecycle_failed_activation");
+    assert.equal(retry.generation, 5);
+
+    const failed = sessions.getOperation("lifecycle_failed_activation");
+    const replacement = sessions.getOperation(retry.operation_id);
+    assert.equal(failed.status, "failed");
+    assert.equal(replacement.status, "completed");
+    assert.equal(replacement.terminal, true);
+
+    const persisted = JSON.parse(await readFile(path.join(harness.stateDirectory, "t_lifecycle.json"), "utf8"));
+    assert.equal(persisted.current_operation_id, retry.operation_id);
+    assert.equal(persisted.operations.length, 2);
+  } finally {
+    await sessions.shutdown();
+    await rm(harness.temp, { recursive: true, force: true });
+  }
+});
+
+test("deactivating an already stopped record persists its completed operation across restart", async () => {
+  const harness = await createHarness("gwrm-lifecycle-inactive-", 50000);
+  const requestedAt = new Date().toISOString();
+  await mkdir(harness.stateDirectory, { recursive: true });
+  await writeFile(path.join(harness.stateDirectory, "t_lifecycle.json"), JSON.stringify({
+    schema_version: 2,
+    worktree_name: "t_lifecycle",
+    container_project_path: "/workspace/lifecycle-tests/.worktrees/t_lifecycle",
+    host_project_path: harness.worktree,
+    desired_active: false,
+    status: "stopped",
+    lsp_port: null,
+    godot_lsp_port: null,
+    dap_port: null,
+    godot_pid: null,
+    godot_mcp_pid: null,
+    residual_pids: [],
+    directory_released: true,
+    created_at: requestedAt,
+    updated_at: requestedAt,
+    operations: [],
+    current_operation_id: null,
+  }, null, 2));
+
+  const sessions = new SessionManager(harness.config, harness.logger);
+  sessions.reconcileAll = async () => {};
+  await sessions.init();
+  try {
+    const inactive = await sessions.deactivateWorktree("t_lifecycle", "already-inactive");
+    const persisted = JSON.parse(await readFile(path.join(harness.stateDirectory, "t_lifecycle.json"), "utf8"));
+    assert.equal(inactive.already_inactive, true);
+    assert.equal(persisted.current_operation_id, inactive.operation_id);
+    assert.equal(persisted.operations.length, 1);
+    assert.equal(persisted.operations[0].status, "completed");
+
+    const restarted = new SessionManager(harness.config, harness.logger);
+    restarted.reconcileAll = async () => {};
+    await restarted.init();
+    try {
+      const operation = restarted.getOperation(inactive.operation_id);
+      assert.equal(operation.status, "completed");
+      assert.equal(operation.terminal, true);
+    } finally {
+      await restarted.shutdown();
+    }
+  } finally {
+    await sessions.shutdown();
+    await rm(harness.temp, { recursive: true, force: true });
+  }
+});
