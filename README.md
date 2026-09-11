@@ -16,6 +16,8 @@ Pasta portátil, iniciada manualmente por `start-gwrm.bat`, para Windows que uni
 - configuração externa em `gwrm.config.json`;
 - inicialização manual por `start-gwrm.bat`.
 
+Operações de lifecycle retornam `operation_id` e `generation`. Consulte seu estado sem repetir a ação com a tool MCP `get_worktree_operation_status(operation_id)` ou com `GET /api/v1/worktree-operations/:operation_id`, autenticado por `X-API-Key`.
+
 Consulte `docs/INSTALLATION.md` e `docs/ARCHITECTURE.md`.
 
 ## Dependencias

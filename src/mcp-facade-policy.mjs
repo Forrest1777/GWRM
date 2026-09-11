@@ -1,6 +1,7 @@
 const SAFE_RETRY_TOOLS = new Set([
   "gwrm_status",
   "get_worktree_status",
+  "get_worktree_operation_status",
   "get_gut_run_status",
   "get_debug_output",
   "get_godot_version",

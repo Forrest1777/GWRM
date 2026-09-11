@@ -49,6 +49,8 @@ No shutdown global, o supervisor tambem encerra o `ComputerUseService`; o `cua-d
 
 `activate_worktree` reutiliza o runtime saudavel existente; `deactivate_worktree` retorna imediatamente quando a worktree ja esta totalmente parada; `get_worktree_status` representa worktrees desconhecidas como `not_registered` em vez de erro; e `stop_project` nao ativa uma worktree para para-la e nao encaminha `stop_project` ao Godot MCP quando nenhum `run_project` foi iniciado pelo runtime dedicado.
 
+Cada operacao de lifecycle persistida pode ser consultada sem efeitos colaterais pela tool MCP `get_worktree_operation_status` ou pela Control API autenticada `GET /api/v1/worktree-operations/:operation_id`. Ambas delegam ao mesmo registro do `SessionManager`; um identificador ausente retorna `{ operation_id, status: "not_found", terminal: true }`.
+
 ## Computer Use
 
 O GWRM nao abre uma segunda instancia grafica para testes. `run_project` e `launch_editor` continuam pertencendo ao Godot MCP dedicado da worktree. O ComputerUseService apenas descobre e interage com as janelas resultantes.

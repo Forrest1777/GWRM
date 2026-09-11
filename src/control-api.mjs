@@ -44,6 +44,12 @@ export function startControlApi(config, sessionManager, toolHandler, logger) {
         send(res, 200, { worktrees: sessionManager.listStatuses() });
         return;
       }
+      const operationMatch = url.pathname.match(/^\/api\/v1\/worktree-operations\/([^/]+)$/);
+      if (operationMatch) {
+        if (req.method !== "GET") { send(res, 405, { error: "method_not_allowed" }); return; }
+        send(res, 200, sessionManager.getOperation(decodeURIComponent(operationMatch[1])));
+        return;
+      }
       const match = url.pathname.match(/^\/api\/v1\/worktrees\/([^/]+)(?:\/(activate|deactivate|ensure))?$/);
       if (!match) { send(res, 404, { error: "not_found" }); return; }
       const name = decodeURIComponent(match[1]);
