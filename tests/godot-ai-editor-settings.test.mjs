@@ -36,11 +36,11 @@ async function readRaw(filePath) {
   return await fs.readFile(filePath, "utf8");
 }
 
-test("resolveDefaultPath uses APPDATA/Godot/editor_settings-4.tres", () => {
+test("resolveDefaultPath uses APPDATA/Godot/editor_settings-4.7.tres", () => {
   const explicit = resolveDefaultPath({ appdataDir: "C:\\\\Users\\\\test\\\\AppData\\\\Roaming" });
   assert.equal(
     explicit,
-    path.join("C:\\\\Users\\\\test\\\\AppData\\\\Roaming", "Godot", "editor_settings-4.tres"),
+    path.join("C:\\\\Users\\\\test\\\\AppData\\\\Roaming", "Godot", "editor_settings-4.7.tres"),
   );
 
   const previous = process.env.APPDATA;
@@ -48,7 +48,7 @@ test("resolveDefaultPath uses APPDATA/Godot/editor_settings-4.tres", () => {
   try {
     assert.equal(
       resolveDefaultPath(),
-      path.join("D:\\\\RoamingAppData", "Godot", "editor_settings-4.tres"),
+      path.join("D:\\\\RoamingAppData", "Godot", "editor_settings-4.7.tres"),
     );
   } finally {
     if (previous === undefined) delete process.env.APPDATA;
@@ -58,7 +58,7 @@ test("resolveDefaultPath uses APPDATA/Godot/editor_settings-4.tres", () => {
   assert.equal(typeof GodotAiEditorSettings.resolveDefaultPath, "function");
   assert.equal(
     GodotAiEditorSettings.resolveDefaultPath({ appdataDir: "/tmp/appdata" }),
-    path.join("/tmp/appdata", "Godot", "editor_settings-4.tres"),
+    path.join("/tmp/appdata", "Godot", "editor_settings-4.7.tres"),
   );
 });
 

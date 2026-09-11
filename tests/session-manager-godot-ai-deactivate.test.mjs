@@ -86,7 +86,7 @@ async function prepareAppData(temp) {
   const appdataDir = path.join(temp, "APPDATA");
   const godotDir = path.join(appdataDir, "Godot");
   await mkdir(godotDir, { recursive: true });
-  const settingsPath = path.join(godotDir, "editor_settings-4.tres");
+  const settingsPath = path.join(godotDir, "editor_settings-4.7.tres");
   await copyFile(fixtureSettings, settingsPath);
   return { appdataDir, settingsPath };
 }

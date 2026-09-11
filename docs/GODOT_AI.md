@@ -67,7 +67,7 @@ Faixas em `gwrm.config.example.json` e `gwrm.config_DEFAULT.json` (`godot_ai_htt
 
 As faixas sao disjuntas entre si e das ja congeladas: LSP 6100-6199, DAP 6200-6299, proxy 7100-7199, MCP 8123, controle 8130. Evitar 8000-8099 (exclusao Hyper-V/WSL documentada no plugin 4.0.4). Nao usar os defaults do plugin (HTTP 8000 / WS 9500) como contrato de isolamento concorrente.
 
-O plugin 4.0.4 le HTTP/WS de EditorSettings do usuario Windows, nao de env. Porta HTTP ocupada ou reservada falha; WS so desvia se o Windows excluiu a faixa. Nao patchar `addons/godot_ai`.
+O plugin 4.0.4 le HTTP/WS de EditorSettings do usuario Windows, nao de env. No pin Godot 4.7.2 o arquivo e `%APPDATA%/Godot/editor_settings-4.7.tres`. Porta HTTP ocupada ou reservada falha; WS so desvia se o Windows excluiu a faixa. Nao patchar `addons/godot_ai`.
 
 ### Secao critica global
 

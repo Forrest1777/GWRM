@@ -253,12 +253,12 @@ async function atomicWrite(settingsPath, text) {
 }
 
 /**
- * Default Windows-style EditorSettings path for Godot 4.
+ * Default Windows-style EditorSettings path for Godot 4.7.2 pin.
  * Tests should pass appdataDir (or an explicit settingsPath) and never write real %APPDATA%.
  */
 export function resolveDefaultPath({ appdataDir } = {}) {
   const root = appdataDir || process.env.APPDATA || "";
-  return path.join(root, "Godot", "editor_settings-4.tres");
+  return path.join(root, "Godot", "editor_settings-4.7.tres");
 }
 
 /**
