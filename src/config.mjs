@@ -73,6 +73,14 @@ function resolveAppPath(value) {
   return path.isAbsolute(text) ? path.normalize(text) : path.resolve(APP_ROOT, text);
 }
 
+function rangesOverlap(startA, endA, startB, endB) {
+  return startA <= endB && startB <= endA;
+}
+
+function rangeContainsPort(start, end, port) {
+  return port >= start && port <= end;
+}
+
 export async function loadConfig(configPath) {
   const absoluteConfigPath = path.resolve(configPath || path.join(APP_ROOT, "gwrm.config.json"));
   const raw = await readFile(absoluteConfigPath, "utf8");
@@ -120,6 +128,10 @@ export async function loadConfig(configPath) {
       lspProxyEnd: integer(ports.lsp_proxy_end, "ports.lsp_proxy_end", 1024, 65535),
       dapStart: integer(ports.dap_start, "ports.dap_start", 1024, 65535),
       dapEnd: integer(ports.dap_end, "ports.dap_end", 1024, 65535),
+      godotAiHttpStart: optionalInteger(ports.godot_ai_http_start, 18000, "ports.godot_ai_http_start", 1024, 65535),
+      godotAiHttpEnd: optionalInteger(ports.godot_ai_http_end, 18099, "ports.godot_ai_http_end", 1024, 65535),
+      godotAiWsStart: optionalInteger(ports.godot_ai_ws_start, 19500, "ports.godot_ai_ws_start", 1024, 65535),
+      godotAiWsEnd: optionalInteger(ports.godot_ai_ws_end, 19599, "ports.godot_ai_ws_end", 1024, 65535),
     },
     sessions: {
       readyTimeoutSeconds: integer(sessions.ready_timeout_seconds, "sessions.ready_timeout_seconds", 5, 3600),
@@ -176,6 +188,38 @@ export async function loadConfig(configPath) {
   if (config.ports.lspStart > config.ports.lspEnd) throw new Error("Faixa LSP invalida.");
   if (config.ports.lspProxyStart > config.ports.lspProxyEnd) throw new Error("Faixa de relay LSP invalida.");
   if (config.ports.dapStart > config.ports.dapEnd) throw new Error("Faixa DAP invalida.");
+  if (config.ports.godotAiHttpStart > config.ports.godotAiHttpEnd) throw new Error("Faixa HTTP Godot AI invalida.");
+  if (config.ports.godotAiWsStart > config.ports.godotAiWsEnd) throw new Error("Faixa WS Godot AI invalida.");
+
+  const godotAiHttp = [config.ports.godotAiHttpStart, config.ports.godotAiHttpEnd];
+  const godotAiWs = [config.ports.godotAiWsStart, config.ports.godotAiWsEnd];
+  const peerRanges = [
+    ["LSP", config.ports.lspStart, config.ports.lspEnd],
+    ["relay LSP", config.ports.lspProxyStart, config.ports.lspProxyEnd],
+    ["DAP", config.ports.dapStart, config.ports.dapEnd],
+  ];
+
+  if (rangesOverlap(...godotAiHttp, ...godotAiWs)) {
+    throw new Error("Faixa HTTP Godot AI e faixa WS Godot AI devem ser disjuntas.");
+  }
+  for (const [label, start, end] of peerRanges) {
+    if (rangesOverlap(...godotAiHttp, start, end)) {
+      throw new Error(`Faixa HTTP Godot AI e faixa ${label} devem ser disjuntas.`);
+    }
+    if (rangesOverlap(...godotAiWs, start, end)) {
+      throw new Error(`Faixa WS Godot AI e faixa ${label} devem ser disjuntas.`);
+    }
+  }
+  if (rangeContainsPort(...godotAiHttp, config.service.mcpPort) || rangeContainsPort(...godotAiWs, config.service.mcpPort)) {
+    throw new Error("Faixas HTTP/WS Godot AI nao podem incluir service.mcp_port.");
+  }
+  if (rangeContainsPort(...godotAiHttp, config.service.controlPort) || rangeContainsPort(...godotAiWs, config.service.controlPort)) {
+    throw new Error("Faixas HTTP/WS Godot AI nao podem incluir service.control_port.");
+  }
+  if (rangesOverlap(...godotAiHttp, 8000, 8099) || rangesOverlap(...godotAiWs, 8000, 8099)) {
+    throw new Error("Faixas HTTP/WS Godot AI nao podem sobrepor 8000-8099.");
+  }
+
   if (config.computerUse.waitTimeoutSeconds > config.computerUse.maxWaitTimeoutSeconds) throw new Error("computer_use.wait_timeout_seconds nao pode exceder max_wait_timeout_seconds.");
   if (config.computerUse.permissionMode === "bounded" && (!config.computerUse.capabilityManifestFile || !config.computerUse.capabilityManifestApproved)) {
     throw new Error("computer_use.permission_mode=bounded exige capability_manifest_file e capability_manifest_approved=true.");
