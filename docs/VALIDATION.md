@@ -90,6 +90,58 @@ Observed result:
 
 No Cua lifecycle error reappeared after the lifecycle fix.
 
+## TODO11 gate F — concurrent Godot AI isolation (live)
+
+Live proof on Windows host (Godot 4.7.2 + Godot AI 4.0.4), card TODO11-11 successor of superseded t_c6fbc01c, head containing EditorSettings 4.7 path fix.
+
+Harness: `tests/godot-ai-concurrent-live.test.mjs` (skipped unless `GWRM_GODOT_AI_LIVE=1` on win32).
+
+Isolated run (not production GWRM / not production state):
+
+```text
+mode: in_process SessionManager from this worktree src
+isolated_root: .../.hermes-tmp/todo11-gatef-gwrm-gatef-gVXbxR
+worktrees: gatef_a, gatef_b (disposable copies with addons/godot_ai 4.0.4)
+```
+
+Observed while both active:
+
+```text
+gatef_a:
+  status=ready
+  godot_ai.status=session_ready
+  session_id=gatef-a@dd4de20d16a7e0ec
+  http_port=18200 ws_port=19700
+  gui_pid=114156
+
+gatef_b:
+  status=ready
+  godot_ai.status=session_ready
+  session_id=gatef-b@53eedd9663025bf1
+  http_port=18201 ws_port=19701
+  gui_pid=147028
+```
+
+Explicit callTool identity (operation `session_manage` op=list with each worktree session_id):
+
+- A identity project_path ends with `/worktrees/gatef_a/`
+- B identity project_path ends with `/worktrees/gatef_b/`
+- foreign session_id on the other attach did not return the other worktree identity
+
+Teardown:
+
+```text
+gatef_a/b: status=stopped, godot_ai.status=runtime_stopped, residual_pids=[], directory_released=true
+editor_settings-4.7.tres restored from backup
+production mcp/control ports 8123/8130 unused by this proof
+```
+
+Harness notes (not src changes):
+
+- Godot 4.7.2 graphical launch yields console+GUI process pair; live lister prefers non-console GUI pid
+- short settle after HTTP listen before attach so session_manage list is populated
+- `npm test` without `GWRM_GODOT_AI_LIVE` skips this file
+
 ## Remaining environment-specific validation
 
 The packaging environment itself does not execute the native Windows stack. Revalidate on the target host after upgrading whenever any of these dependencies change materially:
