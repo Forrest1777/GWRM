@@ -61,6 +61,7 @@ export class SessionManager {
         record.container_project_path = resolved.containerPath;
         record.residual_pids = Array.isArray(record.residual_pids) ? record.residual_pids : [];
         record.directory_released = Boolean(record.directory_released);
+        this.#normalizeGodotAiFields(record);
         this.records.set(record.worktree_name, record);
         if (pathChanged) {
           await this.#persist(record);
@@ -84,6 +85,7 @@ export class SessionManager {
       const paths = resolveWorktreePaths(name, this.config);
       await this.#validateProject(paths.hostPath);
       let record = this.records.get(name) || this.#newRecord(paths);
+      this.#normalizeGodotAiFields(record);
       const previousGodotPid = record.godot_pid;
       const previousMcpPid = record.godot_mcp_pid;
       record.host_project_path = paths.hostPath;
@@ -97,6 +99,7 @@ export class SessionManager {
       this.records.set(name, record);
       await this.#persist(record);
       await this.#ensureRunning(record);
+      if (record.status === "ready") await this.#ensureGodotAiPorts(record);
       const status = this.getStatus(name);
       return {
         ...status,
@@ -164,8 +167,10 @@ export class SessionManager {
         dap: { host: this.config.godot.lspHostForHermes, port: null },
         godot_mcp_ready: false,
         project_started: false,
+        godot_ai: this.#publicGodotAiStatus(null),
       };
     }
+    this.#normalizeGodotAiFields(record);
     const runtime = this.runtime.get(name);
     return {
       ...cloneState(record),
@@ -179,6 +184,7 @@ export class SessionManager {
       dap: { host: this.config.godot.lspHostForHermes, port: record.dap_port },
       godot_mcp_ready: Boolean(runtime?.mcp?.isAlive),
       project_started: Boolean(runtime?.projectStarted),
+      godot_ai: this.#publicGodotAiStatus(record),
     };
   }
 
@@ -246,6 +252,7 @@ export class SessionManager {
         }
         if (record.desired_active) {
           if (record.status !== "failed" || this.config.sessions.restartActiveSessionsAfterCrash) await this.#ensureRunning(record);
+          if (record.desired_active && record.status === "ready") await this.#ensureGodotAiPorts(record);
         } else if (this.runtime.has(name)) {
           const due = !record.shutdown_not_before || Date.now() >= Date.parse(record.shutdown_not_before);
           if (due) await this.#stopRuntime(record, `reconcile_${reason}`);
@@ -285,7 +292,147 @@ export class SessionManager {
       ready_at: null,
       last_error: null,
       shutdown_not_before: null,
+      godot_ai_http_port: null,
+      godot_ai_ws_port: null,
+      godot_ai_gui_pid: null,
+      godot_ai_session_id: null,
+      godot_ai_status: "runtime_stopped",
+      godot_ai_last_error: null,
     };
+  }
+
+  #normalizeGodotAiFields(record) {
+    if (!record) return;
+    record.godot_ai_http_port = Number.isInteger(record.godot_ai_http_port) ? record.godot_ai_http_port : null;
+    record.godot_ai_ws_port = Number.isInteger(record.godot_ai_ws_port) ? record.godot_ai_ws_port : null;
+    record.godot_ai_gui_pid = Number.isInteger(record.godot_ai_gui_pid) ? record.godot_ai_gui_pid : null;
+    record.godot_ai_session_id = typeof record.godot_ai_session_id === "string" ? record.godot_ai_session_id : null;
+    if (
+      record.godot_ai_status !== "runtime_stopped"
+      && record.godot_ai_status !== "runtime_no_session"
+      && record.godot_ai_status !== "session_ready"
+      && record.godot_ai_status !== "session_invalid"
+      && record.godot_ai_status !== "integration_error"
+    ) {
+      record.godot_ai_status = "runtime_stopped";
+    }
+    const lastError = record.godot_ai_last_error;
+    if (
+      !lastError
+      || typeof lastError !== "object"
+      || Array.isArray(lastError)
+      || typeof lastError.code !== "string"
+      || typeof lastError.message !== "string"
+    ) {
+      record.godot_ai_last_error = null;
+    } else {
+      record.godot_ai_last_error = { code: lastError.code, message: lastError.message };
+    }
+  }
+
+  #publicGodotAiStatus(record) {
+    if (!record) {
+      return {
+        status: "runtime_stopped",
+        session_id: null,
+        http_port: null,
+        ws_port: null,
+        gui_pid: null,
+        last_error: null,
+      };
+    }
+    this.#normalizeGodotAiFields(record);
+    const httpPort = record.godot_ai_http_port;
+    const wsPort = record.godot_ai_ws_port;
+    if (record.status !== "ready") {
+      return {
+        status: "runtime_stopped",
+        session_id: null,
+        http_port: httpPort,
+        ws_port: wsPort,
+        gui_pid: null,
+        last_error: null,
+      };
+    }
+    if (record.godot_ai_status === "integration_error") {
+      return {
+        status: "integration_error",
+        session_id: null,
+        http_port: httpPort,
+        ws_port: wsPort,
+        gui_pid: null,
+        last_error: record.godot_ai_last_error,
+      };
+    }
+    return {
+      status: "runtime_no_session",
+      session_id: null,
+      http_port: httpPort,
+      ws_port: wsPort,
+      gui_pid: null,
+      last_error: null,
+    };
+  }
+
+  async #ensureGodotAiPorts(record) {
+    this.#normalizeGodotAiFields(record);
+    if (record.status !== "ready") return;
+
+    const host = this.config.godot.localReadyHost;
+    const stickyPair = Number.isInteger(record.godot_ai_http_port) && Number.isInteger(record.godot_ai_ws_port);
+    if (stickyPair) {
+      if (record.godot_ai_status !== "runtime_no_session" || record.godot_ai_last_error !== null) {
+        record.godot_ai_status = "runtime_no_session";
+        record.godot_ai_last_error = null;
+        await this.#persist(record);
+      }
+      return;
+    }
+
+    try {
+      const reservedHttp = new Set(
+        [...this.records.values()]
+          .filter((item) => item.worktree_name !== record.worktree_name)
+          .map((item) => item.godot_ai_http_port)
+          .filter(Number.isInteger),
+      );
+      const reservedWs = new Set(
+        [...this.records.values()]
+          .filter((item) => item.worktree_name !== record.worktree_name)
+          .map((item) => item.godot_ai_ws_port)
+          .filter(Number.isInteger),
+      );
+      if (!Number.isInteger(record.godot_ai_http_port)) {
+        record.godot_ai_http_port = await allocatePort(
+          host,
+          this.config.ports.godotAiHttpStart,
+          this.config.ports.godotAiHttpEnd,
+          reservedHttp,
+        );
+      }
+      if (!Number.isInteger(record.godot_ai_ws_port)) {
+        record.godot_ai_ws_port = await allocatePort(
+          host,
+          this.config.ports.godotAiWsStart,
+          this.config.ports.godotAiWsEnd,
+          reservedWs,
+        );
+      }
+      record.godot_ai_status = "runtime_no_session";
+      record.godot_ai_last_error = null;
+      await this.#persist(record);
+    } catch (error) {
+      record.godot_ai_status = "integration_error";
+      record.godot_ai_last_error = {
+        code: "godot_ai_port_allocation_failed",
+        message: error.message,
+      };
+      await this.#persist(record);
+      await this.logger.warn("Falha ao alocar portas HTTP/WS Godot AI; runtime TODO9 permanece ready.", {
+        worktree: record.worktree_name,
+        error: error.message,
+      });
+    }
   }
 
   async #ensureRunning(record) {

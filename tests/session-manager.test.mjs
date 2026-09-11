@@ -22,7 +22,10 @@ test("activate, route MCP, run GUT and deactivate isolated worktree", { timeout:
     appRoot: root,
     service: { bindHost: "127.0.0.1", reconciliationIntervalSeconds: 3600, maxActiveWorktrees: 2, shutdownTimeoutSeconds: 5 },
     paths: { stateDirectory: path.join(temp, "state"), logsDirectory: path.join(temp, "logs"), windowsWorktreesRoot: worktrees, containerWorktreesRoot: "/workspace/skill_system_framework/.worktrees", godotExecutable: process.execPath, powershellExecutable: "powershell.exe" },
-    ports: { lspStart: 43000, lspEnd: 43100, lspProxyStart: 43200, lspProxyEnd: 43300, dapStart: 43400, dapEnd: 43500 },
+    ports: {
+      lspStart: 43000, lspEnd: 43100, lspProxyStart: 43200, lspProxyEnd: 43300, dapStart: 43400, dapEnd: 43500,
+      godotAiHttpStart: 45000, godotAiHttpEnd: 45099, godotAiWsStart: 46000, godotAiWsEnd: 46099,
+    },
     sessions: { readyTimeoutSeconds: 8, requireClassCacheBeforeReady: true, removeConfigurationWhenWorktreeMissing: true },
     godot: { executableArgsPrefix: [path.join(root, "tests", "fixtures", "fake-godot.mjs")], localReadyHost: "127.0.0.1", lspHostForHermes: "host.docker.internal", lspRelayEnabled: true, additionalEditorArgs: [] },
     godotMcp: { command: process.execPath, args: [path.join(root, "tests", "fixtures", "fake-godot-mcp.mjs")], protocolVersion: "2024-11-05", startupTimeoutSeconds: 5, requestTimeoutSeconds: 5 },
@@ -133,7 +136,10 @@ test("migrate persisted state paths when worktree root changes", { timeout: 2000
     appRoot: root,
     service: { bindHost: "127.0.0.1", reconciliationIntervalSeconds: 3600, maxActiveWorktrees: 2, shutdownTimeoutSeconds: 5 },
     paths: { stateDirectory, logsDirectory: path.join(temp, "logs"), windowsWorktreesRoot: worktrees, containerWorktreesRoot: "/workspace/skill_system_framework/.worktrees", godotExecutable: process.execPath, powershellExecutable: "powershell.exe" },
-    ports: { lspStart: 43600, lspEnd: 43700, lspProxyStart: 43800, lspProxyEnd: 43900, dapStart: 44000, dapEnd: 44100 },
+    ports: {
+      lspStart: 43600, lspEnd: 43700, lspProxyStart: 43800, lspProxyEnd: 43900, dapStart: 44000, dapEnd: 44100,
+      godotAiHttpStart: 47000, godotAiHttpEnd: 47099, godotAiWsStart: 48000, godotAiWsEnd: 48099,
+    },
     sessions: { readyTimeoutSeconds: 8, inactiveShutdownDelaySeconds: 0, requireClassCacheBeforeReady: true, removeConfigurationWhenWorktreeMissing: true, restartActiveSessionsAfterCrash: true },
     godot: { executableArgsPrefix: [path.join(root, "tests", "fixtures", "fake-godot.mjs")], localReadyHost: "127.0.0.1", lspHostForHermes: "host.docker.internal", lspRelayEnabled: true, additionalEditorArgs: [] },
     godotMcp: { command: process.execPath, args: [path.join(root, "tests", "fixtures", "fake-godot-mcp.mjs")], protocolVersion: "2024-11-05", startupTimeoutSeconds: 5, requestTimeoutSeconds: 5 },
