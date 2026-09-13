@@ -314,11 +314,13 @@ export class GutRunner {
       operation.terminal = true;
       operation.completed_at = new Date().toISOString();
       operation.result = result;
+      void this.#notifyHermesTerminal(operation);
     }).catch(async (error) => {
       operation.status = "failed";
       operation.terminal = true;
       operation.completed_at = new Date().toISOString();
       operation.error = error instanceof Error ? error.message : String(error);
+      void this.#notifyHermesTerminal(operation);
       await this.logger.error("Execucao GUT supervisionada falhou.", {
         operation_id: operation.operation_id,
         worktree: worktreeName,
@@ -329,10 +331,92 @@ export class GutRunner {
     return {
       ...this.#publicOperation(operation),
       reused_existing_operation: false,
+      event_callback: true,
       poll_with: "get_gut_run_status",
     };
   }
 
+  // HERMES_TODO3_GUT_EVENT_CALLBACK_2026_09_13
+  async #notifyHermesTerminal(operation) {
+    if (process.env.HERMES_GUT_EVENT_CALLBACK_DISABLED === "1") return;
+
+    const callbackUrl =
+      process.env.HERMES_GUT_EVENT_CALLBACK_URL ||
+      "http://127.0.0.1:8653/v1/gut-terminal";
+
+    let token;
+    try {
+      const tokenFile =
+        process.env.HERMES_GUT_EVENT_TOKEN_FILE ||
+        new URL("../logs/hermes-gut-event-token", import.meta.url);
+      token = (await readFile(tokenFile, "utf8")).trim();
+    } catch (error) {
+      await this.logger.error("Hermes GUT event token indisponivel.", {
+        operation_id: operation?.operation_id || null,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return;
+    }
+
+    if (!token) return;
+
+    const payload = {
+      schema: "hermes-gut-terminal-event-v1",
+      operation_id: operation.operation_id,
+      worktree_name: operation.worktree_name,
+      selection: operation.selection,
+      status: operation.status,
+      terminal: Boolean(operation.terminal),
+      created_at: operation.created_at,
+      started_at: operation.started_at,
+      completed_at: operation.completed_at,
+      result: operation.result,
+      error: operation.error,
+    };
+
+    for (let attempt = 1; attempt <= 30; attempt += 1) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 5000);
+      try {
+        const response = await fetch(callbackUrl, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "authorization": `Bearer ${token}`,
+          },
+          body: JSON.stringify(payload),
+          signal: controller.signal,
+        });
+
+        if (response.ok) return;
+
+        // 409 is expected during the tiny start/register/park race.
+        if (response.status !== 409) {
+          const detail = (await response.text()).slice(0, 1000);
+          await this.logger.error("Hermes GUT terminal callback recusado.", {
+            operation_id: operation.operation_id,
+            http_status: response.status,
+            detail,
+          });
+          return;
+        }
+      } catch (error) {
+        if (attempt === 30) {
+          await this.logger.error("Hermes GUT terminal callback esgotou retries de entrega.", {
+            operation_id: operation.operation_id,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      } finally {
+        clearTimeout(timer);
+      }
+
+      if (attempt < 30) {
+        const delayMs = Math.min(20000, 250 * (2 ** Math.min(attempt - 1, 7)));
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+      }
+    }
+  }
   #publicOperation(operation) {
     return {
       operation_id: operation.operation_id,
