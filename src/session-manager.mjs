@@ -65,6 +65,70 @@ function extractLaunchEditorPid(result) {
   return null;
 }
 
+function processExecutableBasename(value) {
+  const text = String(value || "").trim().replace(/^"|"$/g, "");
+  if (!text) return "";
+  return text.split(/[\\/]/).filter(Boolean).pop()?.toLowerCase() || "";
+}
+
+export function godotGuiProcessNameForExecutable(godotExecutable) {
+  const configured = processExecutableBasename(godotExecutable);
+  if (!configured) return "";
+
+  for (const suffix of ["_console.exe", ".console.exe", " console.exe", "console.exe"]) {
+    if (configured.endsWith(suffix)) {
+      return `${configured.slice(0, -suffix.length)}.exe`;
+    }
+  }
+
+  return configured;
+}
+
+export function godotGuiProcessNamesForExecutable(godotExecutable) {
+  const guiName = godotGuiProcessNameForExecutable(godotExecutable);
+  return guiName ? [guiName] : [];
+}
+
+export function godotProcessNamesForExecutable(godotExecutable) {
+  const configured = processExecutableBasename(godotExecutable);
+  if (!configured) return [];
+
+  const names = new Set([configured]);
+  const guiName = godotGuiProcessNameForExecutable(godotExecutable);
+  if (guiName) names.add(guiName);
+
+  return [...names];
+}
+
+function processMatchesAllowedNames(processInfo, allowedNames) {
+  const allowed = new Set((allowedNames || []).map((name) => String(name).toLowerCase()));
+  if (allowed.size === 0) return false;
+
+  const byName = processExecutableBasename(processInfo?.name);
+  if (byName && allowed.has(byName)) return true;
+
+  const commandLine = String(processInfo?.command_line || "").trim();
+  if (!commandLine) return false;
+
+  const match = commandLine.match(/^"([^"]+)"|^(\S+)/);
+  const executable = processExecutableBasename(match?.[1] || match?.[2] || "");
+  return Boolean(executable && allowed.has(executable));
+}
+
+export function isConfiguredGodotProcess(processInfo, godotExecutable) {
+  return processMatchesAllowedNames(
+    processInfo,
+    godotProcessNamesForExecutable(godotExecutable),
+  );
+}
+
+export function isConfiguredGodotGuiProcess(processInfo, godotExecutable) {
+  return processMatchesAllowedNames(
+    processInfo,
+    godotGuiProcessNamesForExecutable(godotExecutable),
+  );
+}
+
 function godotAiFailure(code, message) {
   const error = new Error(typeof message === "string" ? message : String(message?.message || message || code));
   error.code = code;
@@ -696,8 +760,15 @@ export class SessionManager {
       );
     }
 
-    // 5) Deterministic session selection (never session_activate; never sessions[0] by order).
-    const sessionId = this.#selectGodotAiSessionId(attached.sessions, guiPid);
+    // 5) Deterministic session selection with bounded readiness wait.
+    // Never session_activate; never sessions[0] by order.
+    const sessionId = await this.#waitForGodotAiSessionId(
+      bridge,
+      attached.sessions,
+      guiPid,
+      timeoutMs,
+      record.worktree_name,
+    );
 
     // 6) Registry bind.
     try {
@@ -751,6 +822,14 @@ export class SessionManager {
       if (preferred) {
         return preferred.pid;
       }
+      await this.logger.warn("Multiple healthy Godot AI GUI candidates.", {
+        worktree: record.worktree_name,
+        candidates: healthy.map((item) => ({
+          pid: item.pid,
+          name: item.name,
+          command_line: item.command_line,
+        })),
+      });
       throw godotAiFailure(
         "godot_ai_launch_editor_failed",
         `Multiple healthy Godot AI GUI candidates for worktree '${record.worktree_name}'.`,
@@ -779,6 +858,14 @@ export class SessionManager {
       const afterLaunch = await this.#listHealthyGodotAiGuis(record);
       if (afterLaunch.length === 1) guiPid = afterLaunch[0].pid;
       else if (afterLaunch.length > 1) {
+        await this.logger.warn("Multiple Godot AI GUI candidates after launch_editor.", {
+          worktree: record.worktree_name,
+          candidates: afterLaunch.map((item) => ({
+            pid: item.pid,
+            name: item.name,
+            command_line: item.command_line,
+          })),
+        });
         throw godotAiFailure(
           "godot_ai_launch_editor_failed",
           `Multiple GUI candidates after launch_editor for worktree '${record.worktree_name}'.`,
@@ -795,15 +882,21 @@ export class SessionManager {
   }
 
   async #listHealthyGodotAiGuis(record) {
+    const processNames = godotGuiProcessNamesForExecutable(this.config.paths.godotExecutable);
     const lister = typeof this.dependencies.godotAiProcessLister === "function"
       ? this.dependencies.godotAiProcessLister
-      : (pathFragment, config) => listWindowsProcessesReferencingPath(pathFragment, config);
-    const processes = await lister(record.host_project_path, this.config);
+      : (pathFragment, config, allowedNames) => listWindowsProcessesReferencingPath(
+          pathFragment,
+          config,
+          allowedNames,
+        );
+    const processes = await lister(record.host_project_path, this.config, processNames);
     const rows = Array.isArray(processes) ? processes : [];
     const healthy = [];
     for (const row of rows) {
       const pid = Number(row?.pid);
       if (!Number.isInteger(pid) || pid <= 0) continue;
+      if (!isConfiguredGodotGuiProcess(row, this.config.paths.godotExecutable)) continue;
       if (!(await this.#isHealthyGodotAiGui(record, pid, row))) continue;
       healthy.push({
         pid,
@@ -819,20 +912,91 @@ export class SessionManager {
     if (pid === record.godot_pid) return false;
     if (!this.isPidAliveFn(pid)) return false;
 
-    let commandLine = typeof processInfo?.command_line === "string" ? processInfo.command_line : null;
+    let effectiveProcessInfo = processInfo;
+    let commandLine = typeof effectiveProcessInfo?.command_line === "string"
+      ? effectiveProcessInfo.command_line
+      : null;
     if (commandLine == null) {
+      const processNames = godotGuiProcessNamesForExecutable(this.config.paths.godotExecutable);
       const lister = typeof this.dependencies.godotAiProcessLister === "function"
         ? this.dependencies.godotAiProcessLister
-        : (pathFragment, config) => listWindowsProcessesReferencingPath(pathFragment, config);
-      const processes = await lister(record.host_project_path, this.config);
+        : (pathFragment, config, allowedNames) => listWindowsProcessesReferencingPath(
+            pathFragment,
+            config,
+            allowedNames,
+          );
+      const processes = await lister(record.host_project_path, this.config, processNames);
       const match = (Array.isArray(processes) ? processes : []).find((row) => Number(row?.pid) === pid);
+      effectiveProcessInfo = match || null;
       commandLine = typeof match?.command_line === "string" ? match.command_line : "";
     }
+    if (!isConfiguredGodotGuiProcess(effectiveProcessInfo, this.config.paths.godotExecutable)) return false;
     if (!commandLine) return false;
     const pathNeedle = String(record.host_project_path || "");
     if (!pathNeedle || !commandLine.toLowerCase().includes(pathNeedle.toLowerCase())) return false;
     if (commandLine.includes("--headless")) return false;
     return true;
+  }
+
+  async #waitForGodotAiSessionId(bridge, initialSessions, guiPid, timeoutMs, worktreeName) {
+    const boundedTimeoutMs = Math.max(1_000, Number(timeoutMs) || 1_000);
+    const deadline = Date.now() + boundedTimeoutMs;
+    let sessions = Array.isArray(initialSessions) ? initialSessions : [];
+    let polls = 0;
+    let waitingLogged = false;
+
+    while (true) {
+      try {
+        const sessionId = this.#selectGodotAiSessionId(sessions, guiPid);
+        if (polls > 0) {
+          await this.logger.info("Godot AI session registrada apos espera de readiness.", {
+            worktree: worktreeName,
+            gui_pid: guiPid,
+            polls,
+          });
+        }
+        return sessionId;
+      } catch (error) {
+        // A real ambiguity must remain fail-closed. Only "no session yet" is retryable.
+        if (error?.code !== "godot_ai_no_session") throw error;
+      }
+
+      const remainingMs = deadline - Date.now();
+      if (remainingMs <= 0) {
+        throw godotAiFailure(
+          "godot_ai_session_timeout",
+          `Godot AI session did not become available for gui_pid=${guiPid} within ${boundedTimeoutMs}ms.`,
+        );
+      }
+
+      if (!bridge?.isConnected || typeof bridge.listSessions !== "function") {
+        throw godotAiFailure(
+          "godot_ai_session_list_unavailable",
+          "Godot AI bridge cannot list sessions while waiting for editor registration.",
+        );
+      }
+
+      if (!waitingLogged) {
+        waitingLogged = true;
+        await this.logger.info("Aguardando registro da sessao Godot AI do editor.", {
+          worktree: worktreeName,
+          gui_pid: guiPid,
+          timeout_ms: boundedTimeoutMs,
+        });
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, Math.min(250, remainingMs)));
+
+      const listed = await bridge.listSessions();
+      polls += 1;
+      if (!listed?.ok) {
+        throw godotAiFailure(
+          "godot_ai_session_list_failed",
+          listed?.message || "Godot AI session_manage list failed while waiting for editor registration.",
+        );
+      }
+      sessions = Array.isArray(listed.sessions) ? listed.sessions : [];
+    }
   }
 
   #selectGodotAiSessionId(sessions, guiPid) {

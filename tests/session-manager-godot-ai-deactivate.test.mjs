@@ -152,7 +152,7 @@ function createGuiRegistry() {
       byPath.set(hostPath, [
         {
           pid,
-          name: "Godot.exe",
+          name: path.basename(process.execPath),
           command_line: `"C:/Godot/Godot.exe" --path ${hostPath} --editor`,
         },
       ]);
@@ -209,7 +209,7 @@ test("deactivate releases registry before stopRuntime and maps runtime_stopped",
   const releaseEvents = [];
 
   try {
-    await withSessions(temp, worktrees, 47000, () => ({
+    await withSessions(temp, worktrees, 20000, () => ({
       godotAiSessionRegistry: registry,
       godotAiAppdataDir: appdataDir,
       godotAiProcessLister: gui.lister,
@@ -279,7 +279,7 @@ test("delayed shutdown: release immediately; runtime_stopped after reconcile due
   const registry = new GodotAiSessionRegistry();
 
   try {
-    await withSessions(temp, worktrees, 48000, () => ({
+    await withSessions(temp, worktrees, 22000, () => ({
       godotAiSessionRegistry: registry,
       godotAiAppdataDir: appdataDir,
       godotAiProcessLister: gui.lister,
@@ -338,7 +338,7 @@ test("reconcile keeps session_ready when registry usable and GUI healthy (no ext
   const registry = new GodotAiSessionRegistry();
 
   try {
-    await withSessions(temp, worktrees, 49000, () => ({
+    await withSessions(temp, worktrees, 24000, () => ({
       godotAiSessionRegistry: registry,
       godotAiAppdataDir: appdataDir,
       godotAiProcessLister: gui.lister,
@@ -390,7 +390,7 @@ test("reconcile relaunches once with same sticky ports when GUI disappears", { t
   const registry = new GodotAiSessionRegistry();
 
   try {
-    await withSessions(temp, worktrees, 50000, () => ({
+    await withSessions(temp, worktrees, 26000, () => ({
       godotAiSessionRegistry: registry,
       godotAiAppdataDir: appdataDir,
       godotAiProcessLister: gui.lister,
@@ -448,7 +448,7 @@ test("simulated restart: persisted session_id is session_invalid until reconcile
   const bridges = createFakeBridgeTracker();
 
   try {
-    const config = buildConfig(temp, worktrees, 51000);
+    const config = buildConfig(temp, worktrees, 28000);
     const logger = new Logger(config.paths.logsDirectory);
     await logger.init();
     const emptyRegistry = new GodotAiSessionRegistry();
@@ -553,7 +553,7 @@ test("two worktrees: deactivate A does not release or rebind B", { timeout: 4000
   const releaseEvents = [];
 
   try {
-    await withSessions(temp, worktrees, 52000, () => ({
+    await withSessions(temp, worktrees, 30000, () => ({
       godotAiSessionRegistry: registry,
       godotAiAppdataDir: appdataDir,
       godotAiProcessLister: gui.lister,

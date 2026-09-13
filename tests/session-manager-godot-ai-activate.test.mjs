@@ -183,7 +183,7 @@ function createGuiRegistry() {
       byPath.set(hostPath, [
         {
           pid,
-          name: "Godot.exe",
+          name: path.basename(process.execPath),
           command_line: `"C:/Godot/Godot.exe" --path ${hostPath} --editor`,
         },
       ]);
@@ -212,6 +212,69 @@ async function withSessions(temp, worktrees, portBase, dependencyFactory, fn) {
   }
 }
 
+
+test("attach waits for delayed editor session registration before binding", { timeout: 30000 }, async () => {
+  const temp = await mkdtemp(path.join(os.tmpdir(), "gwrm-godot-ai-delayed-session-"));
+  const worktrees = path.join(temp, "worktrees");
+  await prepareWorktree(worktrees, "t_delayed_session");
+  const { appdataDir } = await prepareAppData(temp);
+  let listCalls = 0;
+
+  try {
+    await withSessions(temp, worktrees, 30000, () => ({
+      godotAiAppdataDir: appdataDir,
+      godotAiProcessLister: async () => [],
+      isPidAlive: () => true,
+      godotAiWaitForListen: async () => {},
+      godotAiAttachOptions: ({ httpPort, wsPort }) => ({
+        command: process.execPath,
+        args: [fakeAiPath],
+        httpPort,
+        wsPort,
+      }),
+      godotAiBridgeFactory: ({ worktree_name } = {}) => ({
+        async attach() {
+          return {
+            ok: true,
+            session_id: null,
+            sessions: [],
+          };
+        },
+        async listSessions() {
+          listCalls += 1;
+          if (listCalls < 2) {
+            return { ok: true, sessions: [], count: 0 };
+          }
+          return {
+            ok: true,
+            sessions: [
+              {
+                session_id: `${worktree_name}@delayed`,
+                name: worktree_name,
+              },
+            ],
+            count: 1,
+          };
+        },
+        async disconnect() {
+          return { ok: true, disconnected: true };
+        },
+        get isConnected() {
+          return true;
+        },
+      }),
+    }), async (sessions) => {
+      const activated = await sessions.activateWorktree("t_delayed_session", "test");
+
+      assert.equal(activated.status, "ready");
+      assert.equal(activated.godot_ai.status, "session_ready");
+      assert.equal(activated.godot_ai.session_id, "t_delayed_session@delayed");
+      assert.equal(listCalls, 2, "expected polling until the editor session appears");
+    });
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
 test("happy path: EditorSettings, launch_editor, listen, attach, bind → session_ready", { timeout: 30000 }, async () => {
   const temp = await mkdtemp(path.join(os.tmpdir(), "gwrm-godot-ai-activate-happy-"));
   const worktrees = path.join(temp, "worktrees");
