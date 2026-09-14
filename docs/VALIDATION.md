@@ -151,3 +151,25 @@ The packaging environment itself does not execute the native Windows stack. Reva
 - Cua Driver version;
 - Docker Desktop networking;
 - Hermes MCP behavior.
+<!-- HERMES_TODO6_OPS_C_E2E_2026_09_14:BEGIN -->
+## OPS-C final E2E hardening - 2026-09-14
+
+Gate consolidado executado no host Windows depois de TODO5 / Godot AI 4.1.0.
+
+Evidencias compostas e live:
+
+- TODO5 Gate F preservado como checkpoint: duas worktrees reais, sessoes Godot AI distintas, sem cross-talk e teardown validado.
+- TODO5 GUT headless preservado como checkpoint: suite ai_system verde.
+- duas novas worktrees descartaveis OPS-C foram mantidas ativas simultaneamente com o addon Godot AI 4.1.0 sincronizado do projeto canonico;
+- cada worktree atingiu runtime ready, Godot MCP ready, LSP ready e Godot AI session_ready;
+- session_id, HTTP, WS, GUI PID e LSP relay permaneceram distintos entre as worktrees;
+- AI ARENA iniciou e encerrou via GWRM em ambas sem erro fatal de carregamento;
+- restart real do GWRM preservou desired_active e o startup reconcile reconvergiu ambas as worktrees para session_ready;
+- pares HTTP/WS permaneceram sticky atraves do restart;
+- traversal/invalid worktree foi recusado fail-closed;
+- teardown final exigiu status=stopped, godot_ai.status=runtime_stopped, residual_pids=[] e directory_released=true antes de remover as worktrees;
+- Hermes event-driven GUT bridge, thin orchestrator e operational-cost-telemetry foram validados live, sem polling GUT no runner ativo;
+- nenhum core Hermes foi modificado e nenhum push foi executado pelo gate.
+
+OPS-C valida operacao integrada e lifecycle; nao altera a logica de gameplay/autonomia do AI ARENA.
+<!-- HERMES_TODO6_OPS_C_E2E_2026_09_14:END -->
