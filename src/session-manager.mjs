@@ -16,6 +16,21 @@ import { startTcpRelay } from "./tcp-relay.mjs";
 import { GodotAiBridge } from "./godot-ai-bridge.mjs";
 import { GodotAiSessionRegistry, GODOT_AI_SESSION_CONFLICT } from "./godot-ai-session-registry.mjs";
 import { GodotAiEditorSettings } from "./godot-ai-editor-settings.mjs";
+import {
+  GODOT_AI_SESSION_POLL_INTERVAL_MS,
+  GODOT_AI_MIN_SESSION_READINESS_TIMEOUT_MS,
+  godotGuiProcessNamesForExecutable,
+  godotProcessNamesForExecutable,
+  isConfiguredGodotProcess,
+  isConfiguredGodotGuiProcess,
+} from "./godot-ai-policy.mjs";
+export {
+  godotGuiProcessNameForExecutable,
+  godotGuiProcessNamesForExecutable,
+  godotProcessNamesForExecutable,
+  isConfiguredGodotProcess,
+  isConfiguredGodotGuiProcess,
+} from "./godot-ai-policy.mjs";
 
 function now() { return new Date().toISOString(); }
 function cloneState(state) { return JSON.parse(JSON.stringify(state)); }
@@ -63,70 +78,6 @@ function extractLaunchEditorPid(result) {
     }
   }
   return null;
-}
-
-function processExecutableBasename(value) {
-  const text = String(value || "").trim().replace(/^"|"$/g, "");
-  if (!text) return "";
-  return text.split(/[\\/]/).filter(Boolean).pop()?.toLowerCase() || "";
-}
-
-export function godotGuiProcessNameForExecutable(godotExecutable) {
-  const configured = processExecutableBasename(godotExecutable);
-  if (!configured) return "";
-
-  for (const suffix of ["_console.exe", ".console.exe", " console.exe", "console.exe"]) {
-    if (configured.endsWith(suffix)) {
-      return `${configured.slice(0, -suffix.length)}.exe`;
-    }
-  }
-
-  return configured;
-}
-
-export function godotGuiProcessNamesForExecutable(godotExecutable) {
-  const guiName = godotGuiProcessNameForExecutable(godotExecutable);
-  return guiName ? [guiName] : [];
-}
-
-export function godotProcessNamesForExecutable(godotExecutable) {
-  const configured = processExecutableBasename(godotExecutable);
-  if (!configured) return [];
-
-  const names = new Set([configured]);
-  const guiName = godotGuiProcessNameForExecutable(godotExecutable);
-  if (guiName) names.add(guiName);
-
-  return [...names];
-}
-
-function processMatchesAllowedNames(processInfo, allowedNames) {
-  const allowed = new Set((allowedNames || []).map((name) => String(name).toLowerCase()));
-  if (allowed.size === 0) return false;
-
-  const byName = processExecutableBasename(processInfo?.name);
-  if (byName && allowed.has(byName)) return true;
-
-  const commandLine = String(processInfo?.command_line || "").trim();
-  if (!commandLine) return false;
-
-  const match = commandLine.match(/^"([^"]+)"|^(\S+)/);
-  const executable = processExecutableBasename(match?.[1] || match?.[2] || "");
-  return Boolean(executable && allowed.has(executable));
-}
-
-export function isConfiguredGodotProcess(processInfo, godotExecutable) {
-  return processMatchesAllowedNames(
-    processInfo,
-    godotProcessNamesForExecutable(godotExecutable),
-  );
-}
-
-export function isConfiguredGodotGuiProcess(processInfo, godotExecutable) {
-  return processMatchesAllowedNames(
-    processInfo,
-    godotGuiProcessNamesForExecutable(godotExecutable),
-  );
 }
 
 function godotAiFailure(code, message) {
@@ -939,7 +890,10 @@ export class SessionManager {
   }
 
   async #waitForGodotAiSessionId(bridge, initialSessions, guiPid, timeoutMs, worktreeName) {
-    const boundedTimeoutMs = Math.max(1_000, Number(timeoutMs) || 1_000);
+    const boundedTimeoutMs = Math.max(
+      GODOT_AI_MIN_SESSION_READINESS_TIMEOUT_MS,
+      Number(timeoutMs) || GODOT_AI_MIN_SESSION_READINESS_TIMEOUT_MS,
+    );
     const deadline = Date.now() + boundedTimeoutMs;
     let sessions = Array.isArray(initialSessions) ? initialSessions : [];
     let polls = 0;
@@ -985,7 +939,10 @@ export class SessionManager {
         });
       }
 
-      await new Promise((resolve) => setTimeout(resolve, Math.min(250, remainingMs)));
+      await new Promise((resolve) => setTimeout(
+        resolve,
+        Math.min(GODOT_AI_SESSION_POLL_INTERVAL_MS, remainingMs),
+      ));
 
       const listed = await bridge.listSessions();
       polls += 1;

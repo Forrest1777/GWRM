@@ -390,7 +390,7 @@ test(
       godotAiWaitForListen: async (host, port, timeoutMs) => {
         const { waitForPort } = await import("../src/ports.mjs");
         await waitForPort(host, port, timeoutMs);
-        // Godot AI 4.0.4 can accept TCP before session_manage list is populated.
+        // Godot AI 4.x can accept TCP before session_manage list is populated.
         // Live diagnostics showed empty sessions immediately after listen, then a
         // usable session a few seconds later on the same ports.
         await sleep(20_000);

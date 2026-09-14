@@ -188,7 +188,7 @@ test("attach transport failure returns structured GODOT_AI_ATTACH_FAILED", async
   });
 });
 
-test("default attach argv pin matches spike-proven godot-ai==4.0.4 command", () => {
+test("default attach argv pin matches spike-proven godot-ai==4.1.0 command", () => {
   const built = GodotAiBridge.buildDefaultAttachCommand(8000, 9500);
   assert.equal(built.command, "uvx");
   assert.deepEqual(built.args, [
@@ -198,7 +198,7 @@ test("default attach argv pin matches spike-proven godot-ai==4.0.4 command", () 
     "--no-sources",
     "--no-build",
     "--from",
-    "godot-ai==4.0.4",
+    "godot-ai==4.1.0",
     "godot-ai",
     "attach",
     "--port",

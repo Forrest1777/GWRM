@@ -2,7 +2,7 @@
 
 Este documento e a autoridade canonica do alvo de attach, do timing da sessao, das portas HTTP/WS por worktree e da politica do processo GUI. O lifecycle `desired_active` / `status` do runtime persistente permanece em `docs/ARCHITECTURE.md` e no addendum 1.1.0. Este contrato e aditivo: nao substitui headless, LSP, Godot MCP nem Computer Use.
 
-Pins: Godot 4.7.2 e Godot AI 4.0.4. Nao assumir capacidade ausente do spike GODOT-AI-SPIKE-01.
+Pins: Godot 4.7.2 e Godot AI 4.1.0. Nao assumir capacidade ausente do spike GODOT-AI-SPIKE-01.
 
 ```text
 Hermes
@@ -67,7 +67,7 @@ Faixas em `gwrm.config.example.json` e `gwrm.config_DEFAULT.json` (`godot_ai_htt
 
 As faixas sao disjuntas entre si e das ja congeladas: LSP 6100-6199, DAP 6200-6299, proxy 7100-7199, MCP 8123, controle 8130. Evitar 8000-8099 (exclusao Hyper-V/WSL documentada no plugin 4.0.4). Nao usar os defaults do plugin (HTTP 8000 / WS 9500) como contrato de isolamento concorrente.
 
-O plugin 4.0.4 le HTTP/WS de EditorSettings do usuario Windows, nao de env. No pin Godot 4.7.2 o arquivo e `%APPDATA%/Godot/editor_settings-4.7.tres`. Porta HTTP ocupada ou reservada falha; WS so desvia se o Windows excluiu a faixa. Nao patchar `addons/godot_ai`.
+O plugin 4.1.0 le HTTP/WS de EditorSettings do usuario Windows, nao de env. No pin Godot 4.7.2 o arquivo e `%APPDATA%/Godot/editor_settings-4.7.tres`. Porta HTTP ocupada ou reservada falha; WS so desvia se o Windows excluiu a faixa. Nao patchar `addons/godot_ai`.
 
 ### Secao critica global
 
@@ -174,7 +174,7 @@ godot_ai.session_id: null
 godot_ai.gui_pid: null
 ```
 
-## 6. Compatibilidade e limites 4.0.4
+## 6. Compatibilidade e limites 4.1.0
 
 Durante TODO11 permanecem disponiveis Godot MCP, LSP e Computer Use. Sua existencia nao autoriza usa-los como implementacao primaria dos gates Godot AI. Cutover destrutivo e TODO12.
 
@@ -184,3 +184,14 @@ Limites conhecidos e congelados por este contrato:
 - EditorSettings globais (por isso a secao critica);
 - plugin sem fallback HTTP se a porta default estiver ocupada;
 - duas GUIs no mesmo projeto => duas sessoes e risco de cross-talk.
+
+<!-- HERMES_TODO5_GODOT_AI_410_CONSOLIDATION_2026_09_13:BEGIN -->
+## 7. TODO5 - Godot AI 4.1.0 e consolidacao GWRM
+
+- src/godot-ai-policy.mjs e o owner unico do pin do cliente Godot AI, identidade de processos console/GUI e cadencia bounded de session readiness.
+- GodotAiBridge usa exclusivamente o package spec canonico; nao mantem pin proprio.
+- SessionManager continua owner do lifecycle e routing por session_id explicito, mas consome filtros/cadencia do policy owner.
+- Ambiguidade de GUI ou sessao permanece fail-closed.
+- Godot MCP, GUT headless e runtime TODO9 permanecem independentes; a consolidacao nao expande o dominio do GWRM.
+- A release 4.1.0 do addon deve estar instalada pelo updater oficial do proprio plugin antes do cutover do pin GWRM.
+<!-- HERMES_TODO5_GODOT_AI_410_CONSOLIDATION_2026_09_13:END -->

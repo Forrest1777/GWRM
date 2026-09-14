@@ -198,8 +198,81 @@ function createGuiRegistry() {
   };
 }
 
+const HERMES_TODO5_DYNAMIC_TEST_PORT_BASE_2026_09_14 = true;
+
+async function canBindTestPort(port) {
+  return await new Promise((resolve) => {
+    const server = createServer();
+    let settled = false;
+
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      server.removeAllListeners();
+      if (server.listening) {
+        server.close(() => resolve(value));
+      } else {
+        resolve(value);
+      }
+    };
+
+    server.once("error", () => finish(false));
+    server.listen(
+      { host: "127.0.0.1", port, exclusive: true },
+      () => finish(true),
+    );
+  });
+}
+
+async function resolveTestPortBase(preferred) {
+  const candidates = [];
+
+  // Keep legacy bases only when they remain below the common Windows
+  // ephemeral/excluded-port region. Otherwise prefer deterministic low blocks.
+  if (
+    Number.isInteger(preferred)
+    && preferred >= 10000
+    && preferred + 1299 <= 47000
+  ) {
+    candidates.push(preferred);
+  }
+
+  for (const base of [
+    30000, 32000, 34000, 36000, 38000,
+    40000, 42000, 44000, 46000,
+  ]) {
+    if (!candidates.includes(base)) candidates.push(base);
+  }
+
+  // Two-worktree tests can consume the first two ports in each range.
+  // Probe three positions in every derived range before selecting a base.
+  const offsets = [
+    0, 1, 2,
+    200, 201, 202,
+    400, 401, 402,
+    1000, 1001, 1002,
+    1200, 1201, 1202,
+  ];
+
+  for (const base of candidates) {
+    let usable = true;
+    for (const offset of offsets) {
+      if (!(await canBindTestPort(base + offset))) {
+        usable = false;
+        break;
+      }
+    }
+    if (usable) return base;
+  }
+
+  throw new Error(
+    `No safe test port block available; preferred=${preferred}`,
+  );
+}
+
 async function withSessions(temp, worktrees, portBase, dependencyFactory, fn) {
-  const config = buildConfig(temp, worktrees, portBase);
+  const resolvedPortBase = await resolveTestPortBase(portBase);
+  const config = buildConfig(temp, worktrees, resolvedPortBase);
   const logger = new Logger(config.paths.logsDirectory);
   await logger.init();
   const dependencies = dependencyFactory(config);

@@ -1,9 +1,9 @@
 import { StdioMcpClient } from "./stdio-mcp-client.mjs";
+import { GODOT_AI_PACKAGE_SPEC } from "./godot-ai-policy.mjs";
 
 const DEFAULT_PROTOCOL_VERSION = "2024-11-05";
 const DEFAULT_STARTUP_TIMEOUT_MS = 10_000;
 const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;
-const PINNED_GODOT_AI = "godot-ai==4.0.4";
 
 const CODES = Object.freeze({
   SESSION_REQUIRED: "GODOT_AI_SESSION_REQUIRED",
@@ -88,7 +88,7 @@ function buildDefaultAttachArgs(httpPort, wsPort) {
     "--no-sources",
     "--no-build",
     "--from",
-    PINNED_GODOT_AI,
+    GODOT_AI_PACKAGE_SPEC,
     "godot-ai",
     "attach",
     "--port",
